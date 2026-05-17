@@ -6,8 +6,8 @@ import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Componen
 
 import '../../Common Components/SquareLogo.dart';
 import 'arabic_sura_number.dart';
-import 'surah_builder.dart';
 import 'constant.dart';
+import 'reader/quran_reader_page.dart';
 import 'to_arabic_no_converter.dart';
 
 class IndexPage extends StatefulWidget {
@@ -24,6 +24,8 @@ class _IndexPageState extends State<IndexPage> {
 
   Timer? searchDebounce;
   String searchText = '';
+
+  static double listTileHeight = 56.0;
 
   @override
   void initState() {
@@ -74,6 +76,26 @@ class _IndexPageState extends State<IndexPage> {
     super.dispose();
   }
 
+  void openQuranReader({
+    required BuildContext context,
+    required dynamic quranData,
+    required int suraIndex,
+  }) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            QuranReaderPage(
+              arabic: quranData[0],
+              initialSuraIndex: suraIndex,
+              initialAyahIndex: 0,
+            ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -115,17 +137,13 @@ class _IndexPageState extends State<IndexPage> {
                   CustomAppBar(
                     category: CustomAppBarCategory(text: 'القرآن'),
                   ),
-
                   SizedBox(height: 12.h),
-
                   SquareLogo(
                     category: SquareLogoCategory(
                       image: 'assets/icons/QuRan.png',
                     ),
                   ),
-
                   SizedBox(height: 14.h),
-
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16.w),
                     child: _SearchBox(
@@ -135,9 +153,7 @@ class _IndexPageState extends State<IndexPage> {
                       onClear: clearSearch,
                     ),
                   ),
-
                   SizedBox(height: 12.h),
-
                   Expanded(
                     child: Padding(
                       padding: EdgeInsets.symmetric(horizontal: 14.w),
@@ -183,7 +199,6 @@ class _IndexPageState extends State<IndexPage> {
                                 ],
                               ),
                             ),
-
                             Expanded(
                               child: filteredIndexes.isEmpty
                                   ? Center(
@@ -205,7 +220,8 @@ class _IndexPageState extends State<IndexPage> {
                                   physics:
                                   const ClampingScrollPhysics(),
                                   padding: EdgeInsets.zero,
-                                  itemExtent: 38.h,
+                                  itemExtent: listTileHeight.h,
+                                  cacheExtent: listTileHeight.h * 8,
                                   itemCount: filteredIndexes.length,
                                   itemBuilder: (context, listIndex) {
                                     final suraIndex =
@@ -213,30 +229,12 @@ class _IndexPageState extends State<IndexPage> {
 
                                     return _SuraListTile(
                                       index: suraIndex,
+                                      height: listTileHeight.h,
                                       onTap: () {
-                                        fabIsClicked = false;
-
-                                        Navigator.push(
-                                          context,
-                                          PageRouteBuilder(
-                                            pageBuilder: (
-                                                context,
-                                                animation,
-                                                secondaryAnimation,
-                                                ) =>
-                                                SurahBuilder(
-                                                  arabic: snapshot.data[0],
-                                                  sura: suraIndex,
-                                                  suraName:
-                                                  arabicName[suraIndex]
-                                                  ['name'],
-                                                  ayah: 0,
-                                                ),
-                                            transitionDuration:
-                                            Duration.zero,
-                                            reverseTransitionDuration:
-                                            Duration.zero,
-                                          ),
+                                        openQuranReader(
+                                          context: context,
+                                          quranData: snapshot.data,
+                                          suraIndex: suraIndex,
                                         );
                                       },
                                     );
@@ -303,7 +301,7 @@ class _SearchBoxState extends State<_SearchBox> {
     widget.isDark ? const Color(0xff171B26) : const Color(0xffDEE9EF);
 
     return SizedBox(
-      height: 34.h,
+      height: 36.h,
       child: TextField(
         controller: widget.controller,
         textDirection: TextDirection.rtl,
@@ -352,10 +350,12 @@ class _SearchBoxState extends State<_SearchBox> {
 
 class _SuraListTile extends StatelessWidget {
   final int index;
+  final double height;
   final VoidCallback onTap;
 
   const _SuraListTile({
     required this.index,
+    required this.height,
     required this.onTap,
   });
 
@@ -367,47 +367,78 @@ class _SuraListTile extends StatelessWidget {
       color: isEven ? const Color(0xffFDF7E6) : const Color(0xffFDFBF0),
       child: InkWell(
         onTap: onTap,
-        child: Container(
-          height: 38.h,
-          padding: EdgeInsets.symmetric(horizontal: 10.w),
-          decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: Color(0xffDDD6C2),
-                width: 0.4,
+        child: SizedBox(
+          height: height,
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: Color(0xffDDD6C2),
+                  width: 0.5,
+                ),
               ),
             ),
-          ),
-          child: Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Expanded(
-                child: Text(
-                  arabicName[index]['name'],
-                  textDirection: TextDirection.rtl,
-                  textAlign: TextAlign.right,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'quran',
-                    fontSize: 22.sp,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-              SizedBox(width: 8.w),
-              Text(
-                'آياتها ${noOfVerses[index].toString().toArabicNumbers}',
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10.w),
+              child: Row(
                 textDirection: TextDirection.rtl,
-                style: TextStyle(
-                  fontFamily: 'cairo',
-                  fontSize: 8.sp,
-                  color: Colors.black54,
-                ),
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        arabicName[index]['name'],
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        strutStyle: StrutStyle(
+                          fontSize: 20.sp,
+                          height: 1.05,
+                          forceStrutHeight: true,
+                        ),
+                        style: TextStyle(
+                          fontFamily: 'quran',
+                          fontSize: 20.sp,
+                          height: 1.05,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8.w),
+                  SizedBox(
+                    width: 58.w,
+                    child: Center(
+                      child: Text(
+                        'آياتها ${noOfVerses[index].toString().toArabicNumbers}',
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: 9.sp,
+                          height: 1,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8.w),
+                  SizedBox(
+                    width: 52.w,
+                    height: height,
+                    child: Center(
+                      child: Transform.translate(
+                        offset: Offset(0, -3.h),
+                        child: ArabicSuraNumber(i: index),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(width: 8.w),
-              ArabicSuraNumber(i: index),
-            ],
+            ),
           ),
         ),
       ),
