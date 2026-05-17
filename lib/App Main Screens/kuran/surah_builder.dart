@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Components/custom_app_bar.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'constant.dart';
+import 'to_arabic_no_converter.dart';
 
 class SurahBuilder extends StatefulWidget {
   final dynamic sura;
@@ -27,13 +31,27 @@ class SurahBuilder extends StatefulWidget {
 class _SurahBuilderState extends State<SurahBuilder> {
   bool view = true;
 
+  int currentAyahIndex = 0;
+  Timer? saveLastReadDebounce;
+
   @override
   void initState() {
     super.initState();
 
+    currentAyahIndex = widget.ayah;
+
+    itemPositionsListener.itemPositions.addListener(handleVisibleAyahChanged);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       jumpToAyah();
     });
+  }
+
+  @override
+  void dispose() {
+    saveLastReadDebounce?.cancel();
+    itemPositionsListener.itemPositions.removeListener(handleVisibleAyahChanged);
+    super.dispose();
   }
 
   void jumpToAyah() {
@@ -46,6 +64,45 @@ class _SurahBuilderState extends State<SurahBuilder> {
     );
 
     fabIsClicked = false;
+  }
+
+  void handleVisibleAyahChanged() {
+    final positions = itemPositionsListener.itemPositions.value;
+
+    if (positions.isEmpty) return;
+
+    final visiblePositions = positions
+        .where((position) => position.itemLeadingEdge >= 0)
+        .toList();
+
+    if (visiblePositions.isEmpty) return;
+
+    visiblePositions.sort(
+          (a, b) => a.itemLeadingEdge.compareTo(b.itemLeadingEdge),
+    );
+
+    final firstVisibleAyah = visiblePositions.first.index;
+
+    saveLastReadDebounce?.cancel();
+    saveLastReadDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+
+      if (currentAyahIndex != firstVisibleAyah) {
+        setState(() {
+          currentAyahIndex = firstVisibleAyah;
+        });
+      }
+
+      saveLastRead(firstVisibleAyah);
+    });
+  }
+
+  Future<void> saveLastRead(int ayahIndex) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setInt('last_read_sura', widget.sura + 1);
+    await prefs.setInt('last_read_ayah', ayahIndex + 1);
+    await prefs.setString('last_read_sura_name', widget.suraName.toString());
   }
 
   int getPreviousVersesCount() {
@@ -135,6 +192,14 @@ class _SurahBuilderState extends State<SurahBuilder> {
 
               SizedBox(height: 8.h),
 
+              _SuraInfoBar(
+                suraName: widget.suraName.toString(),
+                currentAyah: currentAyahIndex + 1,
+                totalAyah: lengthOfSura,
+              ),
+
+              SizedBox(height: 8.h),
+
               _ReadingModeBar(
                 isMushafMode: !view,
                 onToggleView: () {
@@ -203,6 +268,63 @@ class _SurahBuilderState extends State<SurahBuilder> {
   }
 }
 
+class _SuraInfoBar extends StatelessWidget {
+  final String suraName;
+  final int currentAyah;
+  final int totalAyah;
+
+  const _SuraInfoBar({
+    required this.suraName,
+    required this.currentAyah,
+    required this.totalAyah,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final backgroundColor =
+    isDark ? const Color(0xff171B26) : theme.colorScheme.secondary;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 12.w),
+      child: Container(
+        height: 34.h,
+        padding: EdgeInsets.symmetric(horizontal: 12.w),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Text(
+              'سورة $suraName',
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: 10.sp,
+                fontWeight: FontWeight.w700,
+                color: textColor,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              'آية ${currentAyah.toString().toArabicNumbers} / ${totalAyah.toString().toArabicNumbers}',
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: 9.sp,
+                color: textColor.withOpacity(0.65),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ReadingModeBar extends StatelessWidget {
   final bool isMushafMode;
   final VoidCallback onToggleView;
@@ -242,9 +364,7 @@ class _ReadingModeBar extends StatelessWidget {
                 color: Colors.white,
               ),
             ),
-
             const Spacer(),
-
             Material(
               color: buttonColor,
               borderRadius: BorderRadius.circular(12.r),
@@ -313,6 +433,7 @@ class _AyahByAyahView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ScrollablePositionedList.builder(
+      physics: const ClampingScrollPhysics(),
       itemScrollController: itemScrollController,
       itemPositionsListener: itemPositionsListener,
       itemCount: lengthOfSura,
@@ -320,7 +441,6 @@ class _AyahByAyahView extends StatelessWidget {
         return Column(
           children: [
             if (shouldShowBasmala(index)) const RetunBasmala(),
-
             _AyahTile(
               index: index,
               ayahText: buildVerseText(index),
@@ -404,49 +524,21 @@ class _AyahTile extends StatelessWidget {
             ),
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              ayahText,
-              textDirection: TextDirection.rtl,
-              textAlign: TextAlign.right,
-              strutStyle: StrutStyle(
-                fontSize: arabicFontSize.sp,
-                height: 1.65,
-                forceStrutHeight: true,
-              ),
-              style: TextStyle(
-                fontSize: arabicFontSize.sp,
-                height: 1.65,
-                fontFamily: arabicFont,
-                color: textColor,
-              ),
-            ),
-
-            SizedBox(height: 8.h),
-
-            Row(
-              textDirection: TextDirection.rtl,
-              children: [
-                Icon(
-                  Icons.touch_app_outlined,
-                  size: 12.sp,
-                  color: secondaryTextColor,
-                ),
-                SizedBox(width: 4.w),
-                Text(
-                  'اضغط مطولًا أو اضغط للخيارات',
-                  textDirection: TextDirection.rtl,
-                  style: TextStyle(
-                    fontFamily: 'cairo',
-                    fontSize: 8.sp,
-                    color: secondaryTextColor,
-                  ),
-                ),
-              ],
-            ),
-          ],
+        child: Text(
+          ayahText,
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.right,
+          strutStyle: StrutStyle(
+            fontSize: arabicFontSize.sp,
+            height: 1.65,
+            forceStrutHeight: true,
+          ),
+          style: TextStyle(
+            fontSize: arabicFontSize.sp,
+            height: 1.65,
+            fontFamily: arabicFont,
+            color: textColor,
+          ),
         ),
       ),
     );
@@ -471,7 +563,6 @@ class _MushafView extends StatelessWidget {
       padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
       children: [
         if (shouldShowBasmala) const RetunBasmala(),
-
         Text(
           fullSura,
           textDirection: TextDirection.rtl,
