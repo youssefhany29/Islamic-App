@@ -73,7 +73,7 @@ class IconContainer extends StatelessWidget {
                         ), onTap: () {
                         Navigator.push(
                             context, PageRouteBuilder(
-                            pageBuilder: (context,animation, secondaryAnimation) => IndexPage(),
+                            pageBuilder: (context,animation, secondaryAnimation) => QuranPage(),
                         transitionDuration: Duration.zero,
                         reverseTransitionDuration: Duration.zero
                         ),

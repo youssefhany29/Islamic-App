@@ -9,6 +9,17 @@ import 'index.dart';
 class QuranPage extends StatelessWidget {
   const QuranPage({super.key});
 
+  void _openPageWithoutAnimation(BuildContext context, Widget page) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => page,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -100,11 +111,9 @@ class QuranPage extends StatelessWidget {
                             backgroundColor: buttonColor,
                             textColor: buttonTextColor,
                             onTap: () {
-                              Navigator.push(
+                              _openPageWithoutAnimation(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (_) => const QuranPartsPage(),
-                                ),
+                                const QuranPartsPage(),
                               );
                             },
                           ),
@@ -116,11 +125,9 @@ class QuranPage extends StatelessWidget {
                             backgroundColor: buttonColor,
                             textColor: buttonTextColor,
                             onTap: () {
-                              Navigator.push(
+                              _openPageWithoutAnimation(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (_) => const IndexPage(),
-                                ),
+                                const IndexPage(),
                               );
                             },
                           ),
