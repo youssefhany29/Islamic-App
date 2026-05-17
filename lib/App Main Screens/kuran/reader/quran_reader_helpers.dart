@@ -141,7 +141,15 @@ class QuranReaderHelpers {
     required int suraIndex,
     required int ayahIndex,
   }) {
-    return ayahIndex == 0 && suraIndex != 0 && suraIndex != 8;
+    if (ayahIndex != 0) return false;
+
+    // الفاتحة لا نضيف قبلها بسملة إضافية لأنها آية موجودة بالفعل.
+    if (suraIndex == 0) return false;
+
+    // سورة التوبة لا توجد قبلها بسملة.
+    if (suraIndex == 8) return false;
+
+    return true;
   }
 
   static String getSuraName(int suraIndex) {

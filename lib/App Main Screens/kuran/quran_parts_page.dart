@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Components/custom_app_bar.dart';
+import 'package:islamic_app/Common%20Components/SquareLogo.dart';
 
 import 'constant.dart';
-import 'surah_builder.dart';
+import 'reader/quran_reader_page.dart';
+import 'to_arabic_no_converter.dart';
 
-class QuranPartsPage extends StatelessWidget {
+class QuranPartsPage extends StatefulWidget {
   const QuranPartsPage({super.key});
+
+  @override
+  State<QuranPartsPage> createState() => _QuranPartsPageState();
+}
+
+class _QuranPartsPageState extends State<QuranPartsPage> {
+  late final Future<dynamic> quranFuture;
 
   static const List<_QuranPart> parts = [
     _QuranPart(partNumber: 1, startSura: 1, startAyah: 1, label: 'الفاتحة ١'),
@@ -41,6 +51,32 @@ class QuranPartsPage extends StatelessWidget {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    quranFuture = readJson();
+  }
+
+  void openQuranReader({
+    required BuildContext context,
+    required dynamic quranData,
+    required _QuranPart part,
+  }) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            QuranReaderPage(
+              arabic: quranData[0],
+              initialSuraIndex: part.startSura - 1,
+              initialAyahIndex: part.startAyah - 1,
+            ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -48,8 +84,8 @@ class QuranPartsPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: theme.colorScheme.background,
       body: SafeArea(
-        child: FutureBuilder(
-          future: readJson(),
+        child: FutureBuilder<dynamic>(
+          future: quranFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return Center(
@@ -69,18 +105,21 @@ class QuranPartsPage extends StatelessWidget {
 
             return Column(
               children: [
-                _PartsHeader(theme: theme),
-                SizedBox(height: 16.h),
-                Image.asset(
-                  'assets/icons/QuRan.png',
-                  width: 64.w,
-                  height: 64.w,
+                CustomAppBar(
+                  category: CustomAppBarCategory(text: 'الأجزاء'),
                 ),
-                SizedBox(height: 16.h),
+                SizedBox(height: 12.h),
+                SquareLogo(
+                  category: SquareLogoCategory(
+                    image: 'assets/icons/QuRan.png',
+                  ),
+                ),
+                SizedBox(height: 14.h),
                 Expanded(
                   child: Padding(
                     padding: EdgeInsets.symmetric(horizontal: 14.w),
                     child: Container(
+                      width: double.infinity,
                       decoration: BoxDecoration(
                         color: theme.colorScheme.primary,
                         borderRadius: BorderRadius.only(
@@ -91,9 +130,11 @@ class QuranPartsPage extends StatelessWidget {
                       child: Column(
                         children: [
                           Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 14.w,
-                              vertical: 12.h,
+                            padding: EdgeInsets.only(
+                              top: 12.h,
+                              right: 14.w,
+                              left: 14.w,
+                              bottom: 8.h,
                             ),
                             child: Row(
                               textDirection: TextDirection.rtl,
@@ -102,17 +143,17 @@ class QuranPartsPage extends StatelessWidget {
                                   'الأجزاء',
                                   style: TextStyle(
                                     fontFamily: 'cairo',
-                                    fontSize: 14.sp,
+                                    fontSize: 13.sp,
                                     fontWeight: FontWeight.w700,
                                     color: Colors.white,
                                   ),
                                 ),
                                 const Spacer(),
                                 Text(
-                                  '٣٠ جزء',
+                                  '${parts.length.toString().toArabicNumbers} جزء',
                                   style: TextStyle(
                                     fontFamily: 'cairo',
-                                    fontSize: 10.sp,
+                                    fontSize: 9.sp,
                                     color: Colors.white70,
                                   ),
                                 ),
@@ -121,33 +162,27 @@ class QuranPartsPage extends StatelessWidget {
                           ),
                           Expanded(
                             child: ListView.separated(
-                              padding: EdgeInsets.only(bottom: 12.h),
+                              physics: const ClampingScrollPhysics(),
+                              padding: EdgeInsets.only(
+                                left: 10.w,
+                                right: 10.w,
+                                bottom: 12.h,
+                              ),
                               itemCount: parts.length,
                               separatorBuilder: (_, __) => SizedBox(height: 8.h),
                               itemBuilder: (context, index) {
                                 final part = parts[index];
 
-                                return Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 10.w),
-                                  child: _PartTile(
-                                    part: part,
-                                    isDark: isDark,
-                                    onTap: () {
-                                      fabIsClicked = true;
-
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => SurahBuilder(
-                                            arabic: quranData[0],
-                                            sura: part.startSura - 1,
-                                            suraName: arabicName[part.startSura - 1]['name'],
-                                            ayah: part.startAyah - 1,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
+                                return _PartTile(
+                                  part: part,
+                                  isDark: isDark,
+                                  onTap: () {
+                                    openQuranReader(
+                                      context: context,
+                                      quranData: quranData,
+                                      part: part,
+                                    );
+                                  },
                                 );
                               },
                             ),
@@ -160,53 +195,6 @@ class QuranPartsPage extends StatelessWidget {
               ],
             );
           },
-        ),
-      ),
-    );
-  }
-}
-
-class _PartsHeader extends StatelessWidget {
-  final ThemeData theme;
-
-  const _PartsHeader({
-    required this.theme,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 46.h,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16.w),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                icon: Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: 18.sp,
-                  color: theme.textTheme.headlineLarge?.color,
-                ),
-              ),
-            ),
-            Text(
-              'الأجزاء',
-              style: TextStyle(
-                fontFamily: 'cairo',
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w800,
-                color: theme.textTheme.headlineLarge?.color,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -226,9 +214,8 @@ class _PartTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = isDark
-        ? const Color(0xff171B26)
-        : const Color(0xffDEE9EF);
+    final backgroundColor =
+    isDark ? const Color(0xff171B26) : const Color(0xffDEE9EF);
 
     final textColor = isDark ? Colors.white : Colors.black;
 
@@ -245,7 +232,8 @@ class _PartTile extends StatelessWidget {
             textDirection: TextDirection.rtl,
             children: [
               Text(
-                'الجزء ${part.partNumber}',
+                'الجزء ${part.partNumber.toString().toArabicNumbers}',
+                textDirection: TextDirection.rtl,
                 style: TextStyle(
                   fontFamily: 'cairo',
                   fontSize: 11.sp,
@@ -253,15 +241,18 @@ class _PartTile extends StatelessWidget {
                   color: textColor,
                 ),
               ),
-              SizedBox(width: 8.w),
+              SizedBox(width: 10.w),
               Expanded(
                 child: Text(
                   part.label,
-                  textAlign: TextAlign.left,
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: 'cairo',
                     fontSize: 9.sp,
-                    color: textColor.withOpacity(0.6),
+                    color: textColor.withOpacity(0.65),
                   ),
                 ),
               ),

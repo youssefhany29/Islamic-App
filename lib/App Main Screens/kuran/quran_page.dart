@@ -39,19 +39,16 @@ class QuranPage extends StatelessWidget {
             CustomAppBar(
               category: CustomAppBarCategory(text: 'القرآن'),
             ),
-
             SizedBox(height: 14.h),
-
             SquareLogo(
               category: SquareLogoCategory(
                 image: 'assets/icons/QuRan.png',
               ),
             ),
-
             SizedBox(height: 14.h),
-
             Expanded(
               child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
                 padding: EdgeInsets.symmetric(horizontal: 14.w),
                 child: Column(
                   children: [
@@ -70,9 +67,7 @@ class QuranPage extends StatelessWidget {
                             icon: Icons.check_circle_outline,
                             onTap: () {},
                           ),
-
                           SizedBox(height: 14.h),
-
                           _CardTitle(title: 'تتبع قراءتك'),
                           SizedBox(height: 8.h),
                           _SmallInfoButton(
@@ -83,9 +78,7 @@ class QuranPage extends StatelessWidget {
                             icon: Icons.arrow_back_ios_new_rounded,
                             onTap: () {},
                           ),
-
                           SizedBox(height: 12.h),
-
                           _LargeButton(
                             title: 'إنشاء ختمة',
                             backgroundColor: buttonColor,
@@ -95,9 +88,7 @@ class QuranPage extends StatelessWidget {
                         ],
                       ),
                     ),
-
                     SizedBox(height: 24.h),
-
                     _MainQuranCard(
                       color: cardColor,
                       child: Column(
@@ -105,7 +96,6 @@ class QuranPage extends StatelessWidget {
                         children: [
                           _CardTitle(title: 'القرآن'),
                           SizedBox(height: 10.h),
-
                           _LargeButton(
                             title: 'الأجزاء',
                             backgroundColor: buttonColor,
@@ -117,9 +107,7 @@ class QuranPage extends StatelessWidget {
                               );
                             },
                           ),
-
                           SizedBox(height: 8.h),
-
                           _LargeButton(
                             title: 'الفهرس',
                             backgroundColor: buttonColor,
@@ -134,7 +122,6 @@ class QuranPage extends StatelessWidget {
                         ],
                       ),
                     ),
-
                     SizedBox(height: 18.h),
                   ],
                 ),

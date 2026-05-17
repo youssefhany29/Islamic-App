@@ -4,15 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Components/custom_app_bar.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constant.dart';
 import '../to_arabic_no_converter.dart';
 import 'quran_reader_helpers.dart';
 import 'quran_reader_storage.dart';
+import 'quran_text_mushaf_view.dart';
 
 enum QuranReaderViewMode {
   continuous,
-  pages,
+  mushafText,
 }
 
 class QuranReaderPage extends StatefulWidget {
@@ -41,21 +43,73 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
 
   Timer? saveDebounce;
 
+  double readerFontSize = 22.0;
   QuranReaderViewMode viewMode = QuranReaderViewMode.continuous;
 
   late int currentGlobalAyahIndex;
 
   static const int maxAyahsPerPage = 10;
-
-  int get totalAyahs => QuranReaderHelpers.totalAyahs;
+  static const String fontSizeKey = 'quran_reader_font_size';
 
   QuranAyahPosition get currentPosition {
     return QuranReaderHelpers.getPositionFromGlobalIndex(currentGlobalAyahIndex);
   }
 
+  String get basmalaText {
+    final rawBasmala = widget.arabic[0]['aya_text'].toString();
+    return cleanBasmalaText(rawBasmala);
+  }
+
+  String cleanBasmalaText(String text) {
+    var cleaned = text.trim();
+
+    cleaned = cleaned.replaceAll(
+      RegExp(r'[\u06DD\u06DE\u06E9\uFD3E\uFD3F۝۞۩﴿﴾٠-٩۰-۹0-9]+'),
+      ' ',
+    );
+
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final words = cleaned.split(' ');
+
+    final quranWords = words.where((word) {
+      final hasArabicLetter = RegExp(
+        r'[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]',
+      ).hasMatch(word);
+
+      final hasNumber = RegExp(r'[٠-٩۰-۹0-9]').hasMatch(word);
+
+      return hasArabicLetter && !hasNumber;
+    }).toList();
+
+    if (quranWords.length >= 4) {
+      return quranWords.take(4).join(' ');
+    }
+
+    final onlyArabic = cleaned.replaceAll(
+      RegExp(
+        r'[^\u0621-\u063A\u0641-\u064A\u064B-\u065F\u0670\u0671-\u06D3\s]',
+      ),
+      ' ',
+    ).replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final onlyArabicWords = onlyArabic.split(' ').where((word) {
+      return word.trim().isNotEmpty;
+    }).toList();
+
+    if (onlyArabicWords.length >= 4) {
+      return onlyArabicWords.take(4).join(' ');
+    }
+
+    // آخر حل احتياطي فقط حتى لا يظهر رقم الآية أو تختفي البسملة.
+    return 'بِسْمِ اللَّهِ الرَّحْمَـٰنِ الرَّحـِيـمِ';
+  }
+
   @override
   void initState() {
     super.initState();
+
+    loadReaderFontSize();
 
     quranPages = buildQuranPages();
 
@@ -73,9 +127,7 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!itemScrollController.isAttached) return;
 
-      itemScrollController.jumpTo(
-        index: currentGlobalAyahIndex,
-      );
+      itemScrollController.jumpTo(index: currentGlobalAyahIndex);
     });
   }
 
@@ -85,6 +137,130 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
     pageController.dispose();
     itemPositionsListener.itemPositions.removeListener(handleVisibleAyahChanged);
     super.dispose();
+  }
+
+  Future<void> loadReaderFontSize() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!mounted) return;
+
+    setState(() {
+      readerFontSize = prefs.getDouble(fontSizeKey) ?? 22.0;
+    });
+  }
+
+  Future<void> saveReaderFontSize(double value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(fontSizeKey, value);
+  }
+
+  void openFontSizeSheet() {
+    double tempFontSize = readerFontSize;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20.r),
+        ),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final theme = Theme.of(context);
+            final isDark = theme.brightness == Brightness.dark;
+            final textColor = isDark ? Colors.white : Colors.black87;
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.all(18.w),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'حجم خط القرآن',
+                      style: TextStyle(
+                        fontFamily: 'cairo',
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.w700,
+                        color: textColor,
+                      ),
+                    ),
+                    SizedBox(height: 12.h),
+                    Text(
+                      basmalaText,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.center,
+                      strutStyle: StrutStyle(
+                        fontSize: tempFontSize.sp,
+                        height: 2.25,
+                        forceStrutHeight: true,
+                      ),
+                      style: TextStyle(
+                        fontFamily: arabicFont,
+                        fontSize: tempFontSize.sp,
+                        height: 2.25,
+                        color: textColor,
+                      ),
+                    ),
+                    SizedBox(height: 12.h),
+                    Slider(
+                      min: 18,
+                      max: 34,
+                      divisions: 16,
+                      value: tempFontSize,
+                      onChanged: (value) {
+                        setModalState(() {
+                          tempFontSize = value;
+                        });
+
+                        setState(() {
+                          readerFontSize = value;
+                        });
+
+                        saveReaderFontSize(value);
+                      },
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'صغير',
+                          style: TextStyle(
+                            fontFamily: 'cairo',
+                            fontSize: 10.sp,
+                            color: textColor.withOpacity(0.65),
+                          ),
+                        ),
+                        Text(
+                          tempFontSize.toStringAsFixed(0),
+                          style: TextStyle(
+                            fontFamily: 'cairo',
+                            fontSize: 11.sp,
+                            fontWeight: FontWeight.w700,
+                            color: textColor,
+                          ),
+                        ),
+                        Text(
+                          'كبير',
+                          style: TextStyle(
+                            fontFamily: 'cairo',
+                            fontSize: 10.sp,
+                            color: textColor.withOpacity(0.65),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 10.h),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   List<List<int>> buildQuranPages() {
@@ -99,9 +275,8 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
 
       while (ayahIndex < suraAyahCount) {
         final int remainingAyahs = suraAyahCount - ayahIndex;
-        final int takeCount = remainingAyahs > maxAyahsPerPage
-            ? maxAyahsPerPage
-            : remainingAyahs;
+        final int takeCount =
+        remainingAyahs > maxAyahsPerPage ? maxAyahsPerPage : remainingAyahs;
 
         final pageAyahs = List.generate(
           takeCount,
@@ -194,13 +369,11 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!itemScrollController.isAttached) return;
 
-        itemScrollController.jumpTo(
-          index: currentGlobalAyahIndex,
-        );
+        itemScrollController.jumpTo(index: currentGlobalAyahIndex);
       });
     }
 
-    if (mode == QuranReaderViewMode.pages) {
+    if (mode == QuranReaderViewMode.mushafText) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!pageController.hasClients) return;
 
@@ -222,10 +395,12 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
 
     final position = currentPosition;
     final suraName = QuranReaderHelpers.getSuraName(position.suraIndex);
+
     final juzNumber = QuranReaderHelpers.getJuzNumber(
       suraIndex: position.suraIndex,
       ayahIndex: position.ayahIndex,
     );
+
     final pageNumber = QuranReaderHelpers.getApproxPageNumber(
       currentGlobalAyahIndex,
     );
@@ -248,6 +423,7 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
                 pageNumber: pageNumber,
                 selectedMode: viewMode,
                 onModeSelected: changeViewMode,
+                onFontSizeTap: openFontSizeSheet,
               ),
               SizedBox(height: 8.h),
               Expanded(
@@ -260,17 +436,25 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
                     itemScrollController: itemScrollController,
                     itemPositionsListener: itemPositionsListener,
                     isDark: isDark,
+                    fontSize: readerFontSize,
+                    basmalaText: basmalaText,
                   )
-                      : _PageQuranView(
-                    key: const ValueKey('pages'),
+                      : QuranTextMushafView(
+                    key: const ValueKey('mushafText'),
                     pageController: pageController,
                     quranPages: quranPages,
                     getAyahText: getAyahText,
+                    selectedGlobalAyahIndex: currentGlobalAyahIndex,
                     onPageChanged: (pageIndex) {
                       final firstAyahIndex = quranPages[pageIndex].first;
                       updateCurrentPosition(firstAyahIndex);
                     },
+                    onAyahTap: (globalAyahIndex) {
+                      updateCurrentPosition(globalAyahIndex);
+                    },
                     isDark: isDark,
+                    fontSize: readerFontSize,
+                    basmalaText: basmalaText,
                   ),
                 ),
               ),
@@ -289,6 +473,7 @@ class _ReaderTopBar extends StatelessWidget {
   final int pageNumber;
   final QuranReaderViewMode selectedMode;
   final ValueChanged<QuranReaderViewMode> onModeSelected;
+  final VoidCallback onFontSizeTap;
 
   const _ReaderTopBar({
     required this.suraName,
@@ -297,6 +482,7 @@ class _ReaderTopBar extends StatelessWidget {
     required this.pageNumber,
     required this.selectedMode,
     required this.onModeSelected,
+    required this.onFontSizeTap,
   });
 
   @override
@@ -306,6 +492,7 @@ class _ReaderTopBar extends StatelessWidget {
 
     final backgroundColor =
     isDark ? const Color(0xff171B26) : theme.colorScheme.secondary;
+
     final textColor = isDark ? Colors.white : Colors.black87;
 
     return Padding(
@@ -323,6 +510,11 @@ class _ReaderTopBar extends StatelessWidget {
             _SmallModeSelector(
               selectedMode: selectedMode,
               onModeSelected: onModeSelected,
+            ),
+            SizedBox(width: 6.w),
+            _MiniIconButton(
+              icon: Icons.text_fields_rounded,
+              onTap: onFontSizeTap,
             ),
             SizedBox(width: 8.w),
             Expanded(
@@ -366,6 +558,37 @@ class _ReaderTopBar extends StatelessWidget {
   }
 }
 
+class _MiniIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _MiniIconButton({
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.primary,
+      borderRadius: BorderRadius.circular(9.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(9.r),
+        onTap: onTap,
+        child: SizedBox(
+          width: 28.w,
+          height: 30.h,
+          child: Icon(
+            icon,
+            size: 15.sp,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SmallModeSelector extends StatelessWidget {
   final QuranReaderViewMode selectedMode;
   final ValueChanged<QuranReaderViewMode> onModeSelected;
@@ -402,11 +625,13 @@ class _SmallModeSelector extends StatelessWidget {
           ),
           SizedBox(width: 3.w),
           _SmallModeButton(
-            title: 'صفحات',
-            isSelected: selectedMode == QuranReaderViewMode.pages,
+            title: 'مصحف',
+            isSelected: selectedMode == QuranReaderViewMode.mushafText,
             selectedColor: selectedColor,
-            onTap: () => onModeSelected(QuranReaderViewMode.pages),
+            onTap: () => onModeSelected(QuranReaderViewMode.mushafText),
           ),
+          SizedBox(width: 3.w),
+          const _ComingSoonButton(),
         ],
       ),
     );
@@ -462,11 +687,40 @@ class _SmallModeButton extends StatelessWidget {
   }
 }
 
+class _ComingSoonButton extends StatelessWidget {
+  const _ComingSoonButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 24.h,
+      padding: EdgeInsets.symmetric(horizontal: 7.w),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(8.r),
+      ),
+      child: Text(
+        'قريبًا',
+        style: TextStyle(
+          fontFamily: 'cairo',
+          fontSize: 7.4.sp,
+          fontWeight: FontWeight.w700,
+          height: 1,
+          color: Colors.white54,
+        ),
+      ),
+    );
+  }
+}
+
 class _ContinuousQuranView extends StatelessWidget {
   final String Function(int globalAyahIndex) getAyahText;
   final ItemScrollController itemScrollController;
   final ItemPositionsListener itemPositionsListener;
   final bool isDark;
+  final double fontSize;
+  final String basmalaText;
 
   const _ContinuousQuranView({
     super.key,
@@ -474,6 +728,8 @@ class _ContinuousQuranView extends StatelessWidget {
     required this.itemScrollController,
     required this.itemPositionsListener,
     required this.isDark,
+    required this.fontSize,
+    required this.basmalaText,
   });
 
   @override
@@ -517,11 +773,14 @@ class _ContinuousQuranView extends StatelessWidget {
                       ayahIndex: position.ayahIndex,
                     ),
                     isDark: isDark,
+                    fontSize: fontSize,
+                    basmalaText: basmalaText,
                   ),
                 _AyahReadingTile(
                   ayahText: getAyahText(globalIndex),
                   isDark: isDark,
                   isEven: globalIndex.isEven,
+                  fontSize: fontSize,
                 ),
               ],
             );
@@ -532,229 +791,25 @@ class _ContinuousQuranView extends StatelessWidget {
   }
 }
 
-class _PageQuranView extends StatelessWidget {
-  final PageController pageController;
-  final List<List<int>> quranPages;
-  final String Function(int globalAyahIndex) getAyahText;
-  final ValueChanged<int> onPageChanged;
-  final bool isDark;
-
-  const _PageQuranView({
-    super.key,
-    required this.pageController,
-    required this.quranPages,
-    required this.getAyahText,
-    required this.onPageChanged,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return PageView.builder(
-      reverse: true,
-      controller: pageController,
-      onPageChanged: onPageChanged,
-      itemCount: quranPages.length,
-      itemBuilder: (context, pageIndex) {
-        final ayahIndexes = quranPages[pageIndex];
-        final firstPosition = QuranReaderHelpers.getPositionFromGlobalIndex(
-          ayahIndexes.first,
-        );
-
-        return _MushafLikePage(
-          ayahIndexes: ayahIndexes,
-          firstPosition: firstPosition,
-          getAyahText: getAyahText,
-          isDark: isDark,
-        );
-      },
-    );
-  }
-}
-
-class _MushafLikePage extends StatelessWidget {
-  final List<int> ayahIndexes;
-  final QuranAyahPosition firstPosition;
-  final String Function(int globalAyahIndex) getAyahText;
-  final bool isDark;
-
-  const _MushafLikePage({
-    required this.ayahIndexes,
-    required this.firstPosition,
-    required this.getAyahText,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final backgroundColor = isDark ? const Color(0xff171B26) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black87;
-
-    final juzNumber = QuranReaderHelpers.getJuzNumber(
-      suraIndex: firstPosition.suraIndex,
-      ayahIndex: firstPosition.ayahIndex,
-    );
-
-    final approxPage = QuranReaderHelpers.getApproxPageNumber(
-      firstPosition.globalAyahIndex,
-    );
-
-    final bool startsNewSura = firstPosition.ayahIndex == 0;
-
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(18.r),
-        ),
-        child: Column(
-          children: [
-            Row(
-              textDirection: TextDirection.rtl,
-              children: [
-                Expanded(
-                  child: Text(
-                    'الجزء ${juzNumber.toString().toArabicNumbers} - صفحة ${approxPage.toString().toArabicNumbers}',
-                    textDirection: TextDirection.rtl,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'cairo',
-                      fontSize: 9.sp,
-                      color: textColor.withOpacity(0.58),
-                    ),
-                  ),
-                ),
-                Text(
-                  QuranReaderHelpers.getSuraName(firstPosition.suraIndex),
-                  textDirection: TextDirection.rtl,
-                  style: TextStyle(
-                    fontFamily: 'cairo',
-                    fontSize: 9.sp,
-                    fontWeight: FontWeight.w700,
-                    color: textColor.withOpacity(0.7),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 8.h),
-            if (startsNewSura)
-              _PageSurahHeader(
-                suraName: QuranReaderHelpers.getSuraName(
-                  firstPosition.suraIndex,
-                ),
-                showBasmala: QuranReaderHelpers.shouldShowBasmala(
-                  suraIndex: firstPosition.suraIndex,
-                  ayahIndex: firstPosition.ayahIndex,
-                ),
-                isDark: isDark,
-              ),
-            Expanded(
-              child: SingleChildScrollView(
-                physics: const ClampingScrollPhysics(),
-                child: Text(
-                  ayahIndexes.map(getAyahText).join(' '),
-                  textDirection: TextDirection.rtl,
-                  textAlign: TextAlign.right,
-                  strutStyle: StrutStyle(
-                    fontSize: 22.sp,
-                    height: 1.75,
-                    forceStrutHeight: true,
-                  ),
-                  style: TextStyle(
-                    fontFamily: arabicFont,
-                    fontSize: 22.sp,
-                    height: 1.75,
-                    color: textColor,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PageSurahHeader extends StatelessWidget {
-  final String suraName;
-  final bool showBasmala;
-  final bool isDark;
-
-  const _PageSurahHeader({
-    required this.suraName,
-    required this.showBasmala,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final headerColor =
-    isDark ? const Color(0xff005349) : const Color(0xff224368);
-
-    return Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(vertical: 7.h),
-          decoration: BoxDecoration(
-            color: headerColor,
-            borderRadius: BorderRadius.circular(12.r),
-          ),
-          child: Center(
-            child: Text(
-              'سورة $suraName',
-              textDirection: TextDirection.rtl,
-              style: TextStyle(
-                fontFamily: 'cairo',
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ),
-        if (showBasmala)
-          Padding(
-            padding: EdgeInsets.symmetric(vertical: 10.h),
-            child: Text(
-              'بسم الله الرحمن الرحيم',
-              textDirection: TextDirection.rtl,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'me_quran',
-                fontSize: 20.sp,
-                height: 1.4,
-                color: isDark ? Colors.white : Colors.black87,
-              ),
-            ),
-          )
-        else
-          SizedBox(height: 8.h),
-      ],
-    );
-  }
-}
-
 class _SurahDivider extends StatelessWidget {
   final String suraName;
   final bool showBasmala;
   final bool isDark;
+  final double fontSize;
+  final String basmalaText;
 
   const _SurahDivider({
     required this.suraName,
     required this.showBasmala,
     required this.isDark,
+    required this.fontSize,
+    required this.basmalaText,
   });
 
   @override
   Widget build(BuildContext context) {
     final dividerColor =
     isDark ? const Color(0xff005349) : const Color(0xff224368);
-    final textColor = Colors.white;
 
     return Column(
       children: [
@@ -774,22 +829,27 @@ class _SurahDivider extends StatelessWidget {
                 fontFamily: 'cairo',
                 fontSize: 13.sp,
                 fontWeight: FontWeight.w700,
-                color: textColor,
+                color: Colors.white,
               ),
             ),
           ),
         ),
         if (showBasmala)
           Padding(
-            padding: EdgeInsets.symmetric(vertical: 12.h),
+            padding: EdgeInsets.symmetric(vertical: 10.h),
             child: Text(
-              'بسم الله الرحمن الرحيم',
+              basmalaText,
               textDirection: TextDirection.rtl,
               textAlign: TextAlign.center,
+              strutStyle: StrutStyle(
+                fontSize: (fontSize - 1).sp,
+                height: 2.25,
+                forceStrutHeight: true,
+              ),
               style: TextStyle(
-                fontFamily: 'me_quran',
-                fontSize: 22.sp,
-                height: 1.5,
+                fontFamily: arabicFont,
+                fontSize: (fontSize - 1).sp,
+                height: 2.25,
                 color: isDark ? Colors.white : Colors.black87,
               ),
             ),
@@ -803,11 +863,13 @@ class _AyahReadingTile extends StatelessWidget {
   final String ayahText;
   final bool isDark;
   final bool isEven;
+  final double fontSize;
 
   const _AyahReadingTile({
     required this.ayahText,
     required this.isDark,
     required this.isEven,
+    required this.fontSize,
   });
 
   @override
@@ -839,13 +901,13 @@ class _AyahReadingTile extends StatelessWidget {
         textDirection: TextDirection.rtl,
         textAlign: TextAlign.right,
         strutStyle: StrutStyle(
-          fontSize: arabicFontSize.sp,
-          height: 1.65,
+          fontSize: fontSize.sp,
+          height: 1.7,
           forceStrutHeight: true,
         ),
         style: TextStyle(
-          fontSize: arabicFontSize.sp,
-          height: 1.65,
+          fontSize: fontSize.sp,
+          height: 1.7,
           fontFamily: arabicFont,
           color: textColor,
         ),
