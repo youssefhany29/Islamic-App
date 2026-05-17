@@ -1,183 +1,447 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Components/custom_app_bar.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'constant.dart';
 
-
-
 class SurahBuilder extends StatefulWidget {
-  final sura;
-  final arabic;
-  final suraName;
-  int ayah;
+  final dynamic sura;
+  final dynamic arabic;
+  final dynamic suraName;
+  final int ayah;
 
-  SurahBuilder(
-      {Key? key, this.sura, this.arabic, this.suraName, required this.ayah})
-      : super(key: key);
+  const SurahBuilder({
+    Key? key,
+    this.sura,
+    this.arabic,
+    this.suraName,
+    required this.ayah,
+  }) : super(key: key);
 
   @override
-  _SurahBuilderState createState() => _SurahBuilderState();
+  State<SurahBuilder> createState() => _SurahBuilderState();
 }
+
 class _SurahBuilderState extends State<SurahBuilder> {
   bool view = true;
 
   @override
   void initState() {
-    WidgetsBinding.instance.addPostFrameCallback((_) => jumbToAyah());
     super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      jumpToAyah();
+    });
   }
 
-  jumbToAyah() {
-    if (fabIsClicked) {
-      itemScrollController.scrollTo(
-          index: widget.ayah,
-          duration: const Duration(seconds: 2),
-          curve: Curves.easeInOutCubic);
-    }
+  void jumpToAyah() {
+    if (!fabIsClicked) return;
+
+    itemScrollController.scrollTo(
+      index: widget.ayah,
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeInOutCubic,
+    );
+
     fabIsClicked = false;
   }
 
-  Row verseBuilder(int index, previousVerses) {
-    return Row(
-      children: [
-        Expanded(
+  int getPreviousVersesCount() {
+    int previousVerses = 0;
+
+    if (widget.sura + 1 != 1) {
+      for (int i = widget.sura - 1; i >= 0; i--) {
+        previousVerses += noOfVerses[i];
+      }
+    }
+
+    return previousVerses;
+  }
+
+  String getFullSuraText({
+    required int lengthOfSura,
+    required int previousVerses,
+  }) {
+    final buffer = StringBuffer();
+
+    for (int i = 0; i < lengthOfSura; i++) {
+      buffer.write(widget.arabic[i + previousVerses]['aya_text']);
+      buffer.write(' ');
+    }
+
+    return buffer.toString();
+  }
+
+  bool shouldShowBasmala(int index) {
+    return index == 0 && widget.sura != 0 && widget.sura != 8;
+  }
+
+  void saveCurrentBookmark(int ayahIndex) async {
+    await saveBookMark(widget.sura + 1, ayahIndex);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم حفظ العلامة'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void shareAyah({
+    required int index,
+    required int previousVerses,
+  }) {
+    final ayahText = widget.arabic[index + previousVerses]['aya_text'];
+    final surahName = widget.suraName;
+
+    Share.share('$ayahText\n\nسورة $surahName');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final int lengthOfSura = noOfVerses[widget.sura];
+    final int previousVerses = getPreviousVersesCount();
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final pageBackground = theme.colorScheme.background;
+    final readingBackground =
+    isDark ? const Color(0xff171B26) : const Color(0xffFDFBF0);
+    final verseColor =
+    isDark ? const Color(0xff1E2433) : const Color(0xffFDF7E6);
+    final alternateVerseColor =
+    isDark ? const Color(0xff171B26) : const Color(0xffFDFBF0);
+    final textColor = isDark ? Colors.white.withOpacity(0.92) : Colors.black87;
+    final secondaryTextColor =
+    isDark ? Colors.white70 : Colors.black.withOpacity(0.55);
+
+    return Scaffold(
+      backgroundColor: pageBackground,
+      body: ColoredBox(
+        color: pageBackground,
+        child: SafeArea(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                widget.arabic[index + previousVerses]['aya_text'],
-                textDirection: TextDirection.rtl,
-                style: TextStyle(
-                  fontSize: arabicFontSize,
-                  fontFamily: arabicFont,
-                  color: const Color.fromARGB(196, 0, 0, 0),
+              CustomAppBar(
+                category: CustomAppBarCategory(
+                  text: widget.suraName.toString(),
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
 
-                ],
+              SizedBox(height: 8.h),
+
+              _ReadingModeBar(
+                isMushafMode: !view,
+                onToggleView: () {
+                  setState(() {
+                    view = !view;
+                  });
+                },
+              ),
+
+              SizedBox(height: 8.h),
+
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  margin: EdgeInsets.symmetric(horizontal: 12.w),
+                  decoration: BoxDecoration(
+                    color: readingBackground,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(22.r),
+                      topRight: Radius.circular(22.r),
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(22.r),
+                      topRight: Radius.circular(22.r),
+                    ),
+                    child: view
+                        ? _AyahByAyahView(
+                      lengthOfSura: lengthOfSura,
+                      previousVerses: previousVerses,
+                      verseColor: verseColor,
+                      alternateVerseColor: alternateVerseColor,
+                      textColor: textColor,
+                      secondaryTextColor: secondaryTextColor,
+                      shouldShowBasmala: shouldShowBasmala,
+                      buildVerseText: (index) {
+                        return widget.arabic[index + previousVerses]
+                        ['aya_text'];
+                      },
+                      onBookmark: saveCurrentBookmark,
+                      onShare: (index) {
+                        shareAyah(
+                          index: index,
+                          previousVerses: previousVerses,
+                        );
+                      },
+                    )
+                        : _MushafView(
+                      fullSura: getFullSuraText(
+                        lengthOfSura: lengthOfSura,
+                        previousVerses: previousVerses,
+                      ),
+                      shouldShowBasmala:
+                      widget.sura + 1 != 1 && widget.sura + 1 != 9,
+                      textColor: textColor,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
+}
 
+class _ReadingModeBar extends StatelessWidget {
+  final bool isMushafMode;
+  final VoidCallback onToggleView;
 
+  const _ReadingModeBar({
+    required this.isMushafMode,
+    required this.onToggleView,
+  });
 
-  SafeArea SingleSuraBuilder(LenghtOfSura) {
-    String fullSura = '';
-    int previousVerses = 0;
-    if (widget.sura + 1 != 1) {
-      for (int i = widget.sura - 1; i >= 0; i--) {
-        previousVerses = previousVerses + noOfVerses[i];
-      }
-    }
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
-    if (!view)
-      for (int i = 0; i < LenghtOfSura; i++) {
-        fullSura += (widget.arabic[i + previousVerses]['aya_text']);
-      }
+    final buttonColor =
+    isDark ? const Color(0xff171B26) : theme.colorScheme.secondary;
+    final textColor = isDark ? Colors.white : Colors.black;
 
-
-
-
-    return SafeArea(
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 12.w),
       child: Container(
-        color: const Color.fromARGB(255, 253, 251, 240),
-        child: view
-            ? ScrollablePositionedList.builder(
-          itemBuilder: (BuildContext context, int index) {
-            return Column(
-              children: [
-                (index != 0) || (widget.sura == 0) || (widget.sura == 8)
-                    ? const Text('')
-                    : const RetunBasmala(),
-                Container(
-                  color: index % 2 != 0
-                      ? const Color.fromARGB(255, 253, 251, 240)
-                      : const Color.fromARGB(255, 253, 247, 230),
-                  child: PopupMenuButton(
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: verseBuilder(index, previousVerses),
-                      ),
-                      itemBuilder: (context) => [
-                        PopupMenuItem(
-                          onTap: () {
-                            saveBookMark(widget.sura + 1, index);
-                          },
-                          child: Row(
-                            children: const [
-                              Icon(
-                                Icons.bookmark_add,
-                                color:
-                                Color.fromARGB(255, 56, 115, 59),
-                              ),
-                              SizedBox(
-                                width: 10,
-                              ),
-                              Text('Bookmark'),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          onTap: () {
-
-                          },
-                          child: Row(
-                            //mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: const [
-                              Icon(
-                                Icons.share,
-                                color:
-                                Color.fromARGB(255, 56, 115, 59),
-                              ),
-                              SizedBox(
-                                width: 10,
-                              ),
-                              Text('Share'),
-                            ],
-                          ),
-                        ),
-                      ]),
-                ),
-              ],
-            );
-          },
-          itemScrollController: itemScrollController,
-          itemPositionsListener: itemPositionsListener,
-          itemCount: LenghtOfSura,
-        )
-            : ListView(
+        height: 38.h,
+        padding: EdgeInsets.symmetric(horizontal: 8.w),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary,
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+            Text(
+              'طريقة العرض',
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: 10.sp,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+
+            const Spacer(),
+
+            Material(
+              color: buttonColor,
+              borderRadius: BorderRadius.circular(12.r),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12.r),
+                onTap: onToggleView,
+                child: Container(
+                  height: 28.h,
+                  padding: EdgeInsets.symmetric(horizontal: 10.w),
+                  child: Row(
                     children: [
-                      widget.sura + 1 != 1 && widget.sura + 1 != 9
-                          ? const RetunBasmala()
-                          : const Text(''),
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Text(
-                          fullSura, //mushaf mode
-                          textDirection: TextDirection.rtl,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: mushafFontSize,
-                            fontFamily: arabicFont,
-                            color: const Color.fromARGB(196, 44, 44, 44),
-                          ),
+                      Icon(
+                        isMushafMode
+                            ? Icons.view_agenda_rounded
+                            : Icons.chrome_reader_mode_rounded,
+                        size: 14.sp,
+                        color: textColor,
+                      ),
+                      SizedBox(width: 6.w),
+                      Text(
+                        isMushafMode ? 'آية آية' : 'مصحف',
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: 9.sp,
+                          fontWeight: FontWeight.w600,
+                          color: textColor,
                         ),
                       ),
                     ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AyahByAyahView extends StatelessWidget {
+  final int lengthOfSura;
+  final int previousVerses;
+  final Color verseColor;
+  final Color alternateVerseColor;
+  final Color textColor;
+  final Color secondaryTextColor;
+  final bool Function(int index) shouldShowBasmala;
+  final String Function(int index) buildVerseText;
+  final void Function(int index) onBookmark;
+  final void Function(int index) onShare;
+
+  const _AyahByAyahView({
+    required this.lengthOfSura,
+    required this.previousVerses,
+    required this.verseColor,
+    required this.alternateVerseColor,
+    required this.textColor,
+    required this.secondaryTextColor,
+    required this.shouldShowBasmala,
+    required this.buildVerseText,
+    required this.onBookmark,
+    required this.onShare,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ScrollablePositionedList.builder(
+      itemScrollController: itemScrollController,
+      itemPositionsListener: itemPositionsListener,
+      itemCount: lengthOfSura,
+      itemBuilder: (BuildContext context, int index) {
+        return Column(
+          children: [
+            if (shouldShowBasmala(index)) const RetunBasmala(),
+
+            _AyahTile(
+              index: index,
+              ayahText: buildVerseText(index),
+              backgroundColor:
+              index.isEven ? verseColor : alternateVerseColor,
+              textColor: textColor,
+              secondaryTextColor: secondaryTextColor,
+              onBookmark: () => onBookmark(index),
+              onShare: () => onShare(index),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AyahTile extends StatelessWidget {
+  final int index;
+  final String ayahText;
+  final Color backgroundColor;
+  final Color textColor;
+  final Color secondaryTextColor;
+  final VoidCallback onBookmark;
+  final VoidCallback onShare;
+
+  const _AyahTile({
+    required this.index,
+    required this.ayahText,
+    required this.backgroundColor,
+    required this.textColor,
+    required this.secondaryTextColor,
+    required this.onBookmark,
+    required this.onShare,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      color: Theme.of(context).colorScheme.background,
+      onSelected: (value) {
+        if (value == 'bookmark') {
+          onBookmark();
+        }
+
+        if (value == 'share') {
+          onShare();
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'bookmark',
+          child: Row(
+            children: [
+              Icon(Icons.bookmark_add_outlined),
+              SizedBox(width: 10),
+              Text('حفظ علامة'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'share',
+          child: Row(
+            children: [
+              Icon(Icons.share_outlined),
+              SizedBox(width: 10),
+              Text('مشاركة'),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          border: const Border(
+            bottom: BorderSide(
+              color: Color(0xffDDD6C2),
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              ayahText,
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              strutStyle: StrutStyle(
+                fontSize: arabicFontSize.sp,
+                height: 1.65,
+                forceStrutHeight: true,
+              ),
+              style: TextStyle(
+                fontSize: arabicFontSize.sp,
+                height: 1.65,
+                fontFamily: arabicFont,
+                color: textColor,
+              ),
+            ),
+
+            SizedBox(height: 8.h),
+
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Icon(
+                  Icons.touch_app_outlined,
+                  size: 12.sp,
+                  color: secondaryTextColor,
+                ),
+                SizedBox(width: 4.w),
+                Text(
+                  'اضغط مطولًا أو اضغط للخيارات',
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(
+                    fontFamily: 'cairo',
+                    fontSize: 8.sp,
+                    color: secondaryTextColor,
                   ),
                 ),
               ],
@@ -187,70 +451,72 @@ class _SurahBuilderState extends State<SurahBuilder> {
       ),
     );
   }
+}
 
+class _MushafView extends StatelessWidget {
+  final String fullSura;
+  final bool shouldShowBasmala;
+  final Color textColor;
 
+  const _MushafView({
+    required this.fullSura,
+    required this.shouldShowBasmala,
+    required this.textColor,
+  });
 
   @override
   Widget build(BuildContext context) {
-    int LengthOfSura = noOfVerses[widget.sura];
+    return ListView(
+      physics: const ClampingScrollPhysics(),
+      padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+      children: [
+        if (shouldShowBasmala) const RetunBasmala(),
 
-
-    return MaterialApp(
-      theme: ThemeData(primarySwatch: Colors.yellow),
-      home: Scaffold(
-        appBar: AppBar(
-          leading: Tooltip(
-            message: 'Mushaf Mode',
-            child: TextButton(
-              child: const Icon(
-                Icons.chrome_reader_mode,
-                color: Colors.white,
-              ),
-              onPressed: () {
-                setState(() {
-                  view = !view;
-                });
-              },
-            ),
+        Text(
+          fullSura,
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          strutStyle: StrutStyle(
+            fontSize: mushafFontSize.sp,
+            height: 1.8,
+            forceStrutHeight: true,
           ),
-          centerTitle: true,
-          title: Text(
-            // widget.
-            widget.suraName,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 40,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-                fontFamily: 'quran',
-                shadows: [
-                  Shadow(
-                    offset: Offset(1, 1),
-                    blurRadius: 2.0,
-                    color: Color.fromARGB(255, 0, 0, 0),
-                  ),
-                ]),
+          style: TextStyle(
+            fontSize: mushafFontSize.sp,
+            height: 1.8,
+            fontFamily: arabicFont,
+            color: textColor,
           ),
-          backgroundColor: const Color.fromARGB(255, 56, 115, 59),
         ),
-        body: SingleSuraBuilder(LengthOfSura),
-      ),
+      ],
     );
   }
 }
+
 class RetunBasmala extends StatelessWidget {
   const RetunBasmala({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return Stack(children: [
-      const Center(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(vertical: 14.h, horizontal: 10.w),
+      child: Center(
         child: Text(
           'بسم الله الرحمن الرحيم',
-          style: TextStyle(fontFamily: 'me_quran', fontSize: 30),
           textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'me_quran',
+            fontSize: 23.sp,
+            height: 1.5,
+            color: textColor,
+          ),
         ),
       ),
-    ]);
+    );
   }
 }
