@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-import '../constant.dart';
+import '../main_quraan_components/constant.dart';
 import 'quran_reader_helpers.dart';
 
 class QuranTextMushafView extends StatelessWidget {

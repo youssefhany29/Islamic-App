@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Components/custom_app_bar.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/main_quraan_components/to_arabic_no_converter.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../constant.dart';
-import '../to_arabic_no_converter.dart';
+import '../main_quraan_components/constant.dart';
+import 'quran_bookmark_storage.dart';
+import 'quran_page_mapper.dart';
+import 'quran_png_mushaf_view.dart';
 import 'quran_reader_helpers.dart';
 import 'quran_reader_storage.dart';
 import 'quran_text_mushaf_view.dart';
@@ -15,18 +18,23 @@ import 'quran_text_mushaf_view.dart';
 enum QuranReaderViewMode {
   continuous,
   mushafText,
+  pngMushaf,
 }
 
 class QuranReaderPage extends StatefulWidget {
   final dynamic arabic;
   final int initialSuraIndex;
   final int initialAyahIndex;
+  final QuranReaderViewMode initialViewMode;
+  final int? initialMushafPageNumber;
 
   const QuranReaderPage({
     super.key,
     required this.arabic,
     required this.initialSuraIndex,
     required this.initialAyahIndex,
+    this.initialViewMode = QuranReaderViewMode.continuous,
+    this.initialMushafPageNumber,
   });
 
   @override
@@ -35,6 +43,7 @@ class QuranReaderPage extends StatefulWidget {
 
 class _QuranReaderPageState extends State<QuranReaderPage> {
   final ItemScrollController itemScrollController = ItemScrollController();
+
   final ItemPositionsListener itemPositionsListener =
   ItemPositionsListener.create();
 
@@ -47,6 +56,9 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
   QuranReaderViewMode viewMode = QuranReaderViewMode.continuous;
 
   late int currentGlobalAyahIndex;
+  int currentMushafPageNumber = 1;
+
+  bool showMushafControls = true;
 
   static const int maxAyahsPerPage = 10;
   static const String fontSizeKey = 'quran_reader_font_size';
@@ -86,12 +98,15 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
       return quranWords.take(4).join(' ');
     }
 
-    final onlyArabic = cleaned.replaceAll(
+    final onlyArabic = cleaned
+        .replaceAll(
       RegExp(
         r'[^\u0621-\u063A\u0641-\u064A\u064B-\u065F\u0670\u0671-\u06D3\s]',
       ),
       ' ',
-    ).replaceAll(RegExp(r'\s+'), ' ').trim();
+    )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
 
     final onlyArabicWords = onlyArabic.split(' ').where((word) {
       return word.trim().isNotEmpty;
@@ -101,7 +116,6 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
       return onlyArabicWords.take(4).join(' ');
     }
 
-    // آخر حل احتياطي فقط حتى لا يظهر رقم الآية أو تختفي البسملة.
     return 'بِسْمِ اللَّهِ الرَّحْمَـٰنِ الرَّحـِيـمِ';
   }
 
@@ -113,22 +127,51 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
 
     quranPages = buildQuranPages();
 
+    viewMode = widget.initialViewMode;
+
     currentGlobalAyahIndex = QuranReaderHelpers.getGlobalAyahIndex(
       suraIndex: widget.initialSuraIndex,
       ayahIndex: widget.initialAyahIndex,
     );
 
+    currentMushafPageNumber = widget.initialMushafPageNumber ??
+        QuranPageMapper.getPageNumberForGlobalAyah(currentGlobalAyahIndex);
+
+    final initialPageIndex = viewMode == QuranReaderViewMode.pngMushaf
+        ? currentMushafPageNumber - 1
+        : getPageIndexForGlobalAyah(currentGlobalAyahIndex);
+
     pageController = PageController(
-      initialPage: getPageIndexForGlobalAyah(currentGlobalAyahIndex),
+      initialPage: initialPageIndex,
     );
 
     itemPositionsListener.itemPositions.addListener(handleVisibleAyahChanged);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await loadPageMapAndSync();
+
+      if (viewMode != QuranReaderViewMode.continuous) return;
       if (!itemScrollController.isAttached) return;
 
       itemScrollController.jumpTo(index: currentGlobalAyahIndex);
     });
+  }
+
+  Future<void> loadPageMapAndSync() async {
+    await QuranPageMapper.load();
+
+    if (!mounted) return;
+
+    final mappedPageNumber = widget.initialMushafPageNumber ??
+        QuranPageMapper.getPageNumberForGlobalAyah(currentGlobalAyahIndex);
+
+    setState(() {
+      currentMushafPageNumber = mappedPageNumber;
+    });
+
+    if (viewMode == QuranReaderViewMode.pngMushaf && pageController.hasClients) {
+      pageController.jumpToPage(currentMushafPageNumber - 1);
+    }
   }
 
   @override
@@ -263,6 +306,52 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
     );
   }
 
+  Future<void> saveCurrentBookmark() async {
+    final position = currentPosition;
+
+    final bookmark = QuranBookmark(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      suraIndex: position.suraIndex,
+      ayahIndex: position.ayahIndex,
+      mushafPageNumber: currentMushafPageNumber,
+      viewMode: viewMode.name,
+      createdAt: DateTime.now().toIso8601String(),
+    );
+
+    await QuranBookmarkStorage.addBookmark(bookmark);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        elevation: 0,
+        margin: EdgeInsets.only(
+          left: 24.w,
+          right: 24.w,
+          bottom: 18.h,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        content: Text(
+          'تم حفظ الموضع الحالي',
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.rtl,
+          style: TextStyle(
+            fontFamily: 'cairo',
+            fontSize: 11.sp,
+            color: Colors.white,
+          ),
+        ),
+        duration: const Duration(milliseconds: 900),
+      ),
+    );
+  }
+
   List<List<int>> buildQuranPages() {
     final List<List<int>> pages = [];
 
@@ -306,6 +395,50 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
     return 0;
   }
 
+  int getGlobalAyahIndexFromMushafPage(int pageNumber) {
+    return QuranPageMapper.getGlobalAyahIndexForPage(pageNumber);
+  }
+
+  int getMushafPageNumberFromGlobalAyah(int globalAyahIndex) {
+    return QuranPageMapper.getPageNumberForGlobalAyah(globalAyahIndex);
+  }
+
+  void jumpToMushafPage(int pageNumber) {
+    final safePageNumber = pageNumber.clamp(1, 604);
+
+    if (!pageController.hasClients) return;
+
+    pageController.jumpToPage(safePageNumber - 1);
+
+    final pageFirstGlobalIndex = getGlobalAyahIndexFromMushafPage(
+      safePageNumber,
+    );
+
+    final position = QuranReaderHelpers.getPositionFromGlobalIndex(
+      pageFirstGlobalIndex,
+    );
+
+    setState(() {
+      currentMushafPageNumber = safePageNumber;
+      currentGlobalAyahIndex = pageFirstGlobalIndex;
+    });
+
+    QuranReaderStorage.saveLastRead(
+      suraIndex: position.suraIndex,
+      ayahIndex: position.ayahIndex,
+      viewMode: QuranReaderViewMode.pngMushaf.name,
+      mushafPageNumber: safePageNumber,
+    );
+  }
+
+  void toggleMushafControls() {
+    if (viewMode != QuranReaderViewMode.pngMushaf) return;
+
+    setState(() {
+      showMushafControls = !showMushafControls;
+    });
+  }
+
   void handleVisibleAyahChanged() {
     if (viewMode != QuranReaderViewMode.continuous) return;
 
@@ -337,6 +470,9 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
       if (currentGlobalAyahIndex != globalAyahIndex) {
         setState(() {
           currentGlobalAyahIndex = globalAyahIndex;
+          currentMushafPageNumber = getMushafPageNumberFromGlobalAyah(
+            globalAyahIndex,
+          );
         });
       }
 
@@ -348,6 +484,7 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
         suraIndex: position.suraIndex,
         ayahIndex: position.ayahIndex,
         viewMode: viewMode.name,
+        mushafPageNumber: currentMushafPageNumber,
       );
     });
   }
@@ -357,12 +494,17 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
 
     setState(() {
       viewMode = mode;
+
+      if (mode == QuranReaderViewMode.pngMushaf) {
+        showMushafControls = true;
+      }
     });
 
     QuranReaderStorage.saveLastRead(
       suraIndex: currentPosition.suraIndex,
       ayahIndex: currentPosition.ayahIndex,
       viewMode: mode.name,
+      mushafPageNumber: currentMushafPageNumber,
     );
 
     if (mode == QuranReaderViewMode.continuous) {
@@ -380,6 +522,18 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
         pageController.jumpToPage(
           getPageIndexForGlobalAyah(currentGlobalAyahIndex),
         );
+      });
+    }
+
+    if (mode == QuranReaderViewMode.pngMushaf) {
+      currentMushafPageNumber = getMushafPageNumberFromGlobalAyah(
+        currentGlobalAyahIndex,
+      );
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!pageController.hasClients) return;
+
+        pageController.jumpToPage(currentMushafPageNumber - 1);
       });
     }
   }
@@ -401,8 +555,19 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
       ayahIndex: position.ayahIndex,
     );
 
-    final pageNumber = QuranReaderHelpers.getApproxPageNumber(
-      currentGlobalAyahIndex,
+    final pageNumber = viewMode == QuranReaderViewMode.pngMushaf
+        ? currentMushafPageNumber
+        : getMushafPageNumberFromGlobalAyah(currentGlobalAyahIndex);
+
+    final readerTopBar = _ReaderTopBar(
+      suraName: suraName,
+      ayahNumber: position.ayahIndex + 1,
+      juzNumber: juzNumber,
+      pageNumber: pageNumber,
+      selectedMode: viewMode,
+      onModeSelected: changeViewMode,
+      onFontSizeTap: openFontSizeSheet,
+      onBookmarkTap: saveCurrentBookmark,
     );
 
     return Scaffold(
@@ -415,47 +580,77 @@ class _QuranReaderPageState extends State<QuranReaderPage> {
               CustomAppBar(
                 category: CustomAppBarCategory(text: 'القرآن'),
               ),
+
+              // ✅ ثابت في كل الأوضاع: متصل / نصي / مصحف
               SizedBox(height: 8.h),
-              _ReaderTopBar(
-                suraName: suraName,
-                ayahNumber: position.ayahIndex + 1,
-                juzNumber: juzNumber,
-                pageNumber: pageNumber,
-                selectedMode: viewMode,
-                onModeSelected: changeViewMode,
-                onFontSizeTap: openFontSizeSheet,
-              ),
+              readerTopBar,
               SizedBox(height: 8.h),
+
               Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 160),
-                  child: viewMode == QuranReaderViewMode.continuous
-                      ? _ContinuousQuranView(
-                    key: const ValueKey('continuous'),
-                    getAyahText: getAyahText,
-                    itemScrollController: itemScrollController,
-                    itemPositionsListener: itemPositionsListener,
-                    isDark: isDark,
-                    fontSize: readerFontSize,
-                    basmalaText: basmalaText,
-                  )
-                      : QuranTextMushafView(
-                    key: const ValueKey('mushafText'),
-                    pageController: pageController,
-                    quranPages: quranPages,
-                    getAyahText: getAyahText,
-                    selectedGlobalAyahIndex: currentGlobalAyahIndex,
-                    onPageChanged: (pageIndex) {
-                      final firstAyahIndex = quranPages[pageIndex].first;
-                      updateCurrentPosition(firstAyahIndex);
-                    },
-                    onAyahTap: (globalAyahIndex) {
-                      updateCurrentPosition(globalAyahIndex);
-                    },
-                    isDark: isDark,
-                    fontSize: readerFontSize,
-                    basmalaText: basmalaText,
-                  ),
+                child: viewMode == QuranReaderViewMode.continuous
+                    ? _ContinuousQuranView(
+                  key: const ValueKey('continuous'),
+                  getAyahText: getAyahText,
+                  itemScrollController: itemScrollController,
+                  itemPositionsListener: itemPositionsListener,
+                  isDark: isDark,
+                  fontSize: readerFontSize,
+                  basmalaText: basmalaText,
+                )
+                    : viewMode == QuranReaderViewMode.mushafText
+                    ? QuranTextMushafView(
+                  key: const ValueKey('mushafText'),
+                  pageController: pageController,
+                  quranPages: quranPages,
+                  getAyahText: getAyahText,
+                  selectedGlobalAyahIndex: currentGlobalAyahIndex,
+                  onPageChanged: (pageIndex) {
+                    final firstAyahIndex = quranPages[pageIndex].first;
+                    updateCurrentPosition(firstAyahIndex);
+                  },
+                  onAyahTap: (globalAyahIndex) {
+                    updateCurrentPosition(globalAyahIndex);
+                  },
+                  isDark: isDark,
+                  fontSize: readerFontSize,
+                  basmalaText: basmalaText,
+                )
+                    : QuranPngMushafView(
+                  key: const ValueKey('pngMushaf'),
+                  pageController: pageController,
+                  selectedPageNumber: currentMushafPageNumber,
+                  isDark: isDark,
+                  controlsVisible: showMushafControls,
+                  onToggleControls: toggleMushafControls,
+
+                  // هنسيبه موجود عشان لو الكلاس لسه طالبه،
+                  // بس مش هنستخدمه جوه quran_png_mushaf_view بعد التعديل.
+                  topBar: readerTopBar,
+
+                  currentSuraName: suraName,
+                  currentJuzNumber: juzNumber,
+                  onJumpToPage: jumpToMushafPage,
+                  onPageChanged: (pageNumber) {
+                    final pageFirstGlobalIndex =
+                    getGlobalAyahIndexFromMushafPage(pageNumber);
+
+                    final pagePosition =
+                    QuranReaderHelpers.getPositionFromGlobalIndex(
+                      pageFirstGlobalIndex,
+                    );
+
+                    setState(() {
+                      currentMushafPageNumber = pageNumber;
+                      currentGlobalAyahIndex = pageFirstGlobalIndex;
+                    });
+
+                    QuranReaderStorage.saveLastRead(
+                      suraIndex: pagePosition.suraIndex,
+                      ayahIndex: pagePosition.ayahIndex,
+                      viewMode: QuranReaderViewMode.pngMushaf.name,
+                      mushafPageNumber: pageNumber,
+                    );
+                  },
                 ),
               ),
             ],
@@ -474,6 +669,7 @@ class _ReaderTopBar extends StatelessWidget {
   final QuranReaderViewMode selectedMode;
   final ValueChanged<QuranReaderViewMode> onModeSelected;
   final VoidCallback onFontSizeTap;
+  final VoidCallback onBookmarkTap;
 
   const _ReaderTopBar({
     required this.suraName,
@@ -483,6 +679,7 @@ class _ReaderTopBar extends StatelessWidget {
     required this.selectedMode,
     required this.onModeSelected,
     required this.onFontSizeTap,
+    required this.onBookmarkTap,
   });
 
   @override
@@ -496,12 +693,13 @@ class _ReaderTopBar extends StatelessWidget {
     final textColor = isDark ? Colors.white : Colors.black87;
 
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 12.w),
+      padding: EdgeInsets.symmetric(horizontal: 4.w),
       child: Container(
-        height: 48.h,
-        padding: EdgeInsets.symmetric(horizontal: 8.w),
+        width: double.infinity,
+        height: 40.h,
+        padding: EdgeInsets.symmetric(horizontal: 5.w),
         decoration: BoxDecoration(
-          color: backgroundColor,
+          color: backgroundColor.withOpacity(0.94),
           borderRadius: BorderRadius.circular(14.r),
         ),
         child: Row(
@@ -511,12 +709,17 @@ class _ReaderTopBar extends StatelessWidget {
               selectedMode: selectedMode,
               onModeSelected: onModeSelected,
             ),
-            SizedBox(width: 6.w),
+            SizedBox(width: 3.w),
             _MiniIconButton(
               icon: Icons.text_fields_rounded,
               onTap: onFontSizeTap,
             ),
-            SizedBox(width: 8.w),
+            SizedBox(width: 3.w),
+            _MiniIconButton(
+              icon: Icons.bookmark_add_rounded,
+              onTap: onBookmarkTap,
+            ),
+            SizedBox(width: 5.w),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -525,26 +728,28 @@ class _ReaderTopBar extends StatelessWidget {
                   Text(
                     'سورة $suraName',
                     textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.right,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'cairo',
-                      fontSize: 10.sp,
-                      fontWeight: FontWeight.w700,
-                      height: 1.1,
+                      fontSize: 8.2.sp,
+                      fontWeight: FontWeight.w800,
+                      height: 1.0,
                       color: textColor,
                     ),
                   ),
                   SizedBox(height: 3.h),
                   Text(
-                    'آية ${ayahNumber.toString().toArabicNumbers}  |  جزء ${juzNumber.toString().toArabicNumbers}  |  ص ${pageNumber.toString().toArabicNumbers}',
+                    'آية ${ayahNumber.toString().toArabicNumbers} | ج ${juzNumber.toString().toArabicNumbers} | ص ${pageNumber.toString().toArabicNumbers}',
                     textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.right,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'cairo',
-                      fontSize: 7.2.sp,
-                      height: 1,
+                      fontSize: 5.7.sp,
+                      height: 1.0,
                       color: textColor.withOpacity(0.62),
                     ),
                   ),
@@ -571,16 +776,16 @@ class _MiniIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Theme.of(context).colorScheme.primary,
-      borderRadius: BorderRadius.circular(9.r),
+      borderRadius: BorderRadius.circular(7.r),
       child: InkWell(
-        borderRadius: BorderRadius.circular(9.r),
+        borderRadius: BorderRadius.circular(7.r),
         onTap: onTap,
         child: SizedBox(
-          width: 28.w,
-          height: 30.h,
+          width: 22.w,
+          height: 26.h,
           child: Icon(
             icon,
-            size: 15.sp,
+            size: 12.sp,
             color: Colors.white,
           ),
         ),
@@ -607,11 +812,11 @@ class _SmallModeSelector extends StatelessWidget {
     isDark ? const Color(0xff171B26) : const Color(0xffDEE9EF);
 
     return Container(
-      height: 30.h,
-      padding: EdgeInsets.all(3.w),
+      height: 27.h,
+      padding: EdgeInsets.all(2.5.w),
       decoration: BoxDecoration(
         color: theme.colorScheme.primary,
-        borderRadius: BorderRadius.circular(10.r),
+        borderRadius: BorderRadius.circular(8.r),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -623,15 +828,20 @@ class _SmallModeSelector extends StatelessWidget {
             selectedColor: selectedColor,
             onTap: () => onModeSelected(QuranReaderViewMode.continuous),
           ),
-          SizedBox(width: 3.w),
+          SizedBox(width: 2.w),
           _SmallModeButton(
-            title: 'مصحف',
+            title: 'نصي',
             isSelected: selectedMode == QuranReaderViewMode.mushafText,
             selectedColor: selectedColor,
             onTap: () => onModeSelected(QuranReaderViewMode.mushafText),
           ),
-          SizedBox(width: 3.w),
-          const _ComingSoonButton(),
+          SizedBox(width: 2.w),
+          _SmallModeButton(
+            title: 'مصحف',
+            isSelected: selectedMode == QuranReaderViewMode.pngMushaf,
+            selectedColor: selectedColor,
+            onTap: () => onModeSelected(QuranReaderViewMode.pngMushaf),
+          ),
         ],
       ),
     );
@@ -663,51 +873,27 @@ class _SmallModeButton extends StatelessWidget {
 
     return Material(
       color: isSelected ? selectedColor : Colors.transparent,
-      borderRadius: BorderRadius.circular(8.r),
+      borderRadius: BorderRadius.circular(6.r),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8.r),
+        borderRadius: BorderRadius.circular(6.r),
         onTap: onTap,
-        child: Container(
-          height: 24.h,
-          padding: EdgeInsets.symmetric(horizontal: 7.w),
-          alignment: Alignment.center,
-          child: Text(
-            title,
-            style: TextStyle(
-              fontFamily: 'cairo',
-              fontSize: 7.6.sp,
-              fontWeight: FontWeight.w700,
-              height: 1,
-              color: textColor,
+        child: SizedBox(
+          width: 42.w,
+          height: 22.h,
+          child: Center(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: 8.5.sp,
+                fontWeight: FontWeight.w800,
+                height: 1.0,
+                color: textColor,
+              ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ComingSoonButton extends StatelessWidget {
-  const _ComingSoonButton();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 24.h,
-      padding: EdgeInsets.symmetric(horizontal: 7.w),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(8.r),
-      ),
-      child: Text(
-        'قريبًا',
-        style: TextStyle(
-          fontFamily: 'cairo',
-          fontSize: 7.4.sp,
-          fontWeight: FontWeight.w700,
-          height: 1,
-          color: Colors.white54,
         ),
       ),
     );

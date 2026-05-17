@@ -1,13 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:islamic_app/App%20Main%20Screens/App%20Main%20Screens%20Components/custom_app_bar.dart';
-import 'package:islamic_app/App%20Main%20Screens/kuran/quran_parts_page.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/main_quraan_components/to_arabic_no_converter.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/reader/quran_reader_page.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/reader/quran_reader_storage.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/wird/create_khatma_page.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/wird/daily_wird_page.dart';
+import 'package:islamic_app/App%20Main%20Screens/kuran/wird/quran_wird_storage.dart';
 import 'package:islamic_app/Common%20Components/SquareLogo.dart';
 
-import 'index.dart';
+import 'main_quraan_components/constant.dart';
+import 'main_quraan_components/index.dart';
+import 'main_quraan_components/quran_bookmarks_page.dart';
+import 'main_quraan_components/quran_parts_page.dart';
 
-class QuranPage extends StatelessWidget {
+class QuranPage extends StatefulWidget {
   const QuranPage({super.key});
+
+  @override
+  State<QuranPage> createState() => _QuranPageState();
+}
+
+class _QuranPageState extends State<QuranPage> {
+  late Future<_QuranHomeWirdInfo> homeWirdFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    homeWirdFuture = _loadHomeWirdInfo();
+  }
+
+  void _refreshHomeWird() {
+    setState(() {
+      homeWirdFuture = _loadHomeWirdInfo();
+    });
+  }
 
   void _openPageWithoutAnimation(BuildContext context, Widget page) {
     Navigator.push(
@@ -18,6 +45,72 @@ class QuranPage extends StatelessWidget {
         reverseTransitionDuration: Duration.zero,
       ),
     );
+  }
+
+  QuranReaderViewMode _parseViewMode(String savedMode) {
+    return QuranReaderViewMode.values.firstWhere(
+          (mode) => mode.name == savedMode,
+      orElse: () => QuranReaderViewMode.continuous,
+    );
+  }
+
+  Future<void> _openLastRead(BuildContext context) async {
+    final lastRead = await QuranReaderStorage.getLastRead();
+
+    if (!context.mounted) return;
+
+    if (lastRead == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'لا يوجد آخر موضع قراءة محفوظ حتى الآن',
+            textDirection: TextDirection.rtl,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final quranData = await readJson();
+
+    if (!context.mounted) return;
+
+    _openPageWithoutAnimation(
+      context,
+      QuranReaderPage(
+        arabic: quranData[0],
+        initialSuraIndex: lastRead.suraIndex,
+        initialAyahIndex: lastRead.ayahIndex,
+        initialViewMode: _parseViewMode(lastRead.viewMode),
+        initialMushafPageNumber: lastRead.mushafPageNumber,
+      ),
+    );
+  }
+
+  Future<void> _openCreateKhatmaPage(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const CreateKhatmaPage(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    _refreshHomeWird();
+  }
+
+  Future<void> _openDailyWirdPage(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DailyWirdPage(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    _refreshHomeWird();
   }
 
   @override
@@ -57,33 +150,72 @@ class QuranPage extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          _CardTitle(title: 'ورد اليوم'),
+                          const _CardTitle(title: 'ورد اليوم'),
                           SizedBox(height: 8.h),
-                          _SmallInfoButton(
-                            title: 'سورة الكهف',
-                            subtitle: 'من الآية (١) إلى الآية (٢٠)',
-                            backgroundColor: buttonColor,
-                            textColor: buttonTextColor,
-                            icon: Icons.check_circle_outline,
-                            onTap: () {},
+                          FutureBuilder<_QuranHomeWirdInfo>(
+                            future: homeWirdFuture,
+                            builder: (context, snapshot) {
+                              final wirdInfo = snapshot.data;
+
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return _SmallInfoButton(
+                                  title: 'جاري تحميل الأوراد...',
+                                  subtitle: 'برجاء الانتظار',
+                                  backgroundColor: buttonColor,
+                                  textColor: buttonTextColor,
+                                  icon: Icons.hourglass_empty_rounded,
+                                  onTap: () {},
+                                );
+                              }
+
+                              if (wirdInfo == null ||
+                                  !wirdInfo.hasActiveWirds) {
+                                return _SmallInfoButton(
+                                  title: 'لا توجد أوراد حالية',
+                                  subtitle: 'اضغط لإنشاء ورد أو ختمة جديدة',
+                                  backgroundColor: buttonColor,
+                                  textColor: buttonTextColor,
+                                  icon: Icons.add_circle_outline_rounded,
+                                  onTap: () {
+                                    _openCreateKhatmaPage(context);
+                                  },
+                                );
+                              }
+
+                              return _SmallInfoButton(
+                                title: wirdInfo.title,
+                                subtitle: wirdInfo.subtitle,
+                                backgroundColor: buttonColor,
+                                textColor: buttonTextColor,
+                                icon: Icons.check_circle_outline,
+                                onTap: () {
+                                  _openDailyWirdPage(context);
+                                },
+                              );
+                            },
                           ),
                           SizedBox(height: 14.h),
-                          _CardTitle(title: 'تتبع قراءتك'),
+                          const _CardTitle(title: 'تتبع قراءتك'),
                           SizedBox(height: 8.h),
                           _SmallInfoButton(
-                            title: 'سورة البقرة',
-                            subtitle: 'من الآية (٢٠) إلى الآية (٤٠)',
+                            title: 'آخر موضع قراءة',
+                            subtitle: 'اضغط للرجوع إلى آخر مكان وقفت عنده',
                             backgroundColor: buttonColor,
                             textColor: buttonTextColor,
                             icon: Icons.arrow_back_ios_new_rounded,
-                            onTap: () {},
+                            onTap: () {
+                              _openLastRead(context);
+                            },
                           ),
                           SizedBox(height: 12.h),
                           _LargeButton(
                             title: 'إنشاء ختمة',
                             backgroundColor: buttonColor,
                             textColor: buttonTextColor,
-                            onTap: () {},
+                            onTap: () {
+                              _openCreateKhatmaPage(context);
+                            },
                           ),
                         ],
                       ),
@@ -94,8 +226,20 @@ class QuranPage extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          _CardTitle(title: 'القرآن'),
+                          const _CardTitle(title: 'القرآن'),
                           SizedBox(height: 10.h),
+                          _LargeButton(
+                            title: 'العلامات المحفوظة',
+                            backgroundColor: buttonColor,
+                            textColor: buttonTextColor,
+                            onTap: () {
+                              _openPageWithoutAnimation(
+                                context,
+                                const QuranBookmarksPage(),
+                              );
+                            },
+                          ),
+                          SizedBox(height: 8.h),
                           _LargeButton(
                             title: 'الأجزاء',
                             backgroundColor: buttonColor,
@@ -205,41 +349,52 @@ class _SmallInfoButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(12.r),
         onTap: onTap,
         child: Container(
-          height: 34.h,
+          height: 38.h,
           padding: EdgeInsets.symmetric(horizontal: 8.w),
           child: Row(
             textDirection: TextDirection.rtl,
             children: [
-              Text(
-                title,
-                textDirection: TextDirection.rtl,
-                style: TextStyle(
-                  fontFamily: 'cairo',
-                  fontSize: 9.sp,
-                  fontWeight: FontWeight.w700,
-                  color: textColor,
-                ),
-              ),
-              SizedBox(width: 6.w),
-              Expanded(
-                child: Text(
-                  subtitle,
-                  textAlign: TextAlign.right,
-                  textDirection: TextDirection.rtl,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'cairo',
-                    fontSize: 7.5.sp,
-                    color: textColor.withOpacity(0.55),
-                  ),
-                ),
-              ),
-              SizedBox(width: 6.w),
               Icon(
                 icon,
-                size: 13.sp,
+                size: 14.sp,
                 color: textColor,
+              ),
+              SizedBox(width: 7.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'cairo',
+                        fontSize: 9.sp,
+                        fontWeight: FontWeight.w800,
+                        color: textColor,
+                        height: 1,
+                      ),
+                    ),
+                    SizedBox(height: 4.h),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'cairo',
+                        fontSize: 7.2.sp,
+                        color: textColor.withOpacity(0.58),
+                        height: 1,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -298,4 +453,59 @@ class _LargeButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _QuranHomeWirdInfo {
+  final bool hasActiveWirds;
+  final String title;
+  final String subtitle;
+
+  const _QuranHomeWirdInfo({
+    required this.hasActiveWirds,
+    required this.title,
+    required this.subtitle,
+  });
+}
+
+Future<_QuranHomeWirdInfo> _loadHomeWirdInfo() async {
+  final activeWirds = await QuranWirdStorage.buildTodayWirds();
+
+  if (activeWirds.isEmpty) {
+    return const _QuranHomeWirdInfo(
+      hasActiveWirds: false,
+      title: '',
+      subtitle: '',
+    );
+  }
+
+  final firstWird = activeWirds.first;
+
+  final fromSuraName = QuranWirdStorage.getSuraName(firstWird.fromSuraIndex);
+  final toSuraName = QuranWirdStorage.getSuraName(firstWird.toSuraIndex);
+
+  final fromAyah = (firstWird.fromAyahIndex + 1).toString().toArabicNumbers;
+  final toAyah = (firstWird.toAyahIndex + 1).toString().toArabicNumbers;
+
+  final fromPage = firstWird.fromPageNumber.toString().toArabicNumbers;
+  final toPage = firstWird.toPageNumber.toString().toArabicNumbers;
+
+  final activeCount = activeWirds.length.toString().toArabicNumbers;
+
+  final suraRange = fromSuraName == toSuraName
+      ? 'سورة $fromSuraName'
+      : 'من $fromSuraName إلى $toSuraName';
+
+  final title = activeWirds.length == 1
+      ? firstWird.planName
+      : '$activeCount أوراد حالية';
+
+  final subtitle = activeWirds.length == 1
+      ? '$suraRange | ص $fromPage إلى ص $toPage | آية $fromAyah إلى آية $toAyah'
+      : '${firstWird.planName}: $suraRange | ص $fromPage إلى ص $toPage';
+
+  return _QuranHomeWirdInfo(
+    hasActiveWirds: true,
+    title: title,
+    subtitle: subtitle,
+  );
 }

@@ -5,7 +5,6 @@ import ' hijrii_date.dart';
 import '../../../App Main Screens/Ahadeth/ahadeth_page.dart';
 import '../../../App Main Screens/Night Pray/night_pray_page.dart';
 import '../../../App Main Screens/Zekr Page/zekr_page.dart';
-import '../../../App Main Screens/kuran/index.dart';
 import '../../../App Main Screens/kuran/quran_page.dart';
 import 'icons_main_widget.dart';
 

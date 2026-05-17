@@ -6,7 +6,7 @@ import 'package:islamic_app/theme/theme_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'App Main Screens/PrayerPage/Services/notification_service.dart';
-import 'App Main Screens/kuran/constant.dart';
+import 'App Main Screens/kuran/main_quraan_components/constant.dart';
 import 'MainPage/main_page.dart';
 
 void main() async {

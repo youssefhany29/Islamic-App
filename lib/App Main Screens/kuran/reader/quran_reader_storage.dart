@@ -4,11 +4,13 @@ class QuranLastRead {
   final int suraIndex;
   final int ayahIndex;
   final String viewMode;
+  final int mushafPageNumber;
 
   const QuranLastRead({
     required this.suraIndex,
     required this.ayahIndex,
     required this.viewMode,
+    required this.mushafPageNumber,
   });
 }
 
@@ -16,17 +18,23 @@ class QuranReaderStorage {
   static const String _lastSuraKey = 'quran_last_sura_index';
   static const String _lastAyahKey = 'quran_last_ayah_index';
   static const String _lastViewModeKey = 'quran_last_view_mode';
+  static const String _lastMushafPageKey = 'quran_last_mushaf_page_number';
 
   static Future<void> saveLastRead({
     required int suraIndex,
     required int ayahIndex,
     required String viewMode,
+    int? mushafPageNumber,
   }) async {
     final prefs = await SharedPreferences.getInstance();
 
     await prefs.setInt(_lastSuraKey, suraIndex);
     await prefs.setInt(_lastAyahKey, ayahIndex);
     await prefs.setString(_lastViewModeKey, viewMode);
+
+    if (mushafPageNumber != null) {
+      await prefs.setInt(_lastMushafPageKey, mushafPageNumber);
+    }
   }
 
   static Future<QuranLastRead?> getLastRead() async {
@@ -35,6 +43,7 @@ class QuranReaderStorage {
     final suraIndex = prefs.getInt(_lastSuraKey);
     final ayahIndex = prefs.getInt(_lastAyahKey);
     final viewMode = prefs.getString(_lastViewModeKey) ?? 'continuous';
+    final mushafPageNumber = prefs.getInt(_lastMushafPageKey) ?? 1;
 
     if (suraIndex == null || ayahIndex == null) {
       return null;
@@ -44,6 +53,16 @@ class QuranReaderStorage {
       suraIndex: suraIndex,
       ayahIndex: ayahIndex,
       viewMode: viewMode,
+      mushafPageNumber: mushafPageNumber,
     );
+  }
+
+  static Future<void> clearLastRead() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.remove(_lastSuraKey);
+    await prefs.remove(_lastAyahKey);
+    await prefs.remove(_lastViewModeKey);
+    await prefs.remove(_lastMushafPageKey);
   }
 }

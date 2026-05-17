@@ -1,4 +1,4 @@
-import '../constant.dart';
+import '../main_quraan_components/constant.dart';
 
 class QuranAyahPosition {
   final int suraIndex;
