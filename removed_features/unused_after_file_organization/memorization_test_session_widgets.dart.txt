@@ -1,3 +1,0 @@
-part of 'memorization_test_session_page.dart';
-
-// Declarations moved into smaller part files during the large-file refactor.
