@@ -1,0 +1,454 @@
+part of 'memorization_plan_journey_engine.dart';
+
+extension _MemorizationPlanJourneyTasks on MemorizationPlanJourneyEngine {
+  MemorizationJourneyTask _primaryJourneyTaskFromChunk({
+    required MemorizationActivePlanModel plan,
+    required MemorizationScheduleChunk chunk,
+    required int index,
+    required String type,
+    required DateTime date,
+    required bool isProjected,
+  }) {
+    return MemorizationJourneyTask(
+      task: _taskFromChunk(
+        plan: plan,
+        chunk: chunk,
+        index: index,
+        type: type,
+        title: type == 'dailyNew' ? 'حفظ الصباح' : 'مراجعة اليوم',
+        subtitle: type == 'dailyNew'
+            ? 'حفظ ${chunk.ayahsCount} آية'
+            : 'مراجعة ${chunk.ayahsCount} آية',
+        scheduledDate: date,
+        timeCode: type == 'dailyNew' ? 'morning' : 'mainReview',
+        expectedMinutes: _estimateMinutes(
+          ayahsCount: chunk.ayahsCount,
+          type: type,
+        ),
+      ),
+      date: date,
+      timeLabel: type == 'dailyNew' ? 'الصباح' : 'اليوم',
+      priority: type == 'dailyNew' ? 1 : 2,
+      isProjected: isProjected,
+    );
+  }
+
+  MemorizationJourneyTask _reviewJourneyTaskFromChunk({
+    required MemorizationActivePlanModel plan,
+    required MemorizationScheduleChunk chunk,
+    required int index,
+    required DateTime date,
+    required bool isProjected,
+    required String title,
+    required String subtitle,
+    required String timeCode,
+    int? minGlobalAyahIndex,
+    int? maxGlobalAyahIndex,
+  }) {
+    return MemorizationJourneyTask(
+      task: _taskFromChunk(
+        plan: plan,
+        chunk: chunk,
+        index: index,
+        type: 'dailyReview',
+        title: title,
+        subtitle: subtitle,
+        scheduledDate: date,
+        timeCode: '${timeCode}_$index',
+        expectedMinutes: _estimateMinutes(
+          ayahsCount: chunk.ayahsCount,
+          type: 'dailyReview',
+        ),
+        minGlobalAyahIndex: minGlobalAyahIndex,
+        maxGlobalAyahIndex: maxGlobalAyahIndex,
+      ),
+      date: date,
+      timeLabel: 'المراجعة',
+      priority: 2,
+      isProjected: isProjected,
+    );
+  }
+
+  MemorizationJourneyTask _externalComprehensiveReviewTask({
+    required MemorizationActivePlanModel plan,
+    required DateTime date,
+    required bool isProjected,
+  }) {
+    final start = plan.reviewStartGlobalAyahIndex;
+    final end = plan.reviewEndGlobalAyahIndex < start
+        ? start
+        : plan.reviewEndGlobalAyahIndex;
+    final count = end - start + 1;
+
+    return MemorizationJourneyTask(
+      task: _taskFromRange(
+        plan: plan,
+        type: 'dailyReview',
+        title: 'مراجعة شاملة',
+        subtitle: 'مراجعة نطاق المراجعة كاملًا',
+        startGlobalAyahIndex: start,
+        endGlobalAyahIndex: end,
+        scheduledDate: date,
+        timeCode: 'reviewSeparateComprehensive',
+        expectedMinutes: _estimateMinutes(
+          ayahsCount: count,
+          type: 'dailyReview',
+        ),
+        minGlobalAyahIndex: plan.reviewStartGlobalAyahIndex,
+        maxGlobalAyahIndex: plan.reviewEndGlobalAyahIndex,
+      ),
+      date: date,
+      timeLabel: 'المراجعة',
+      priority: 2,
+      isProjected: isProjected,
+    );
+  }
+
+  MemorizationJourneyTask? _learnedReviewTaskForDay({
+    required MemorizationActivePlanModel plan,
+    required List<MemorizationScheduleChunk> primaryChunks,
+    required int learnedCount,
+    required int reviewIndex,
+    required DateTime date,
+    required bool isProjected,
+    bool forceCumulative = false,
+  }) {
+    if (primaryChunks.isEmpty || learnedCount <= 0) return null;
+
+    final lastLearnedIndex = (learnedCount - 1)
+        .clamp(0, primaryChunks.length - 1)
+        .toInt();
+
+    final bool cumulative = forceCumulative || reviewIndex % 4 == 3;
+
+    final startIndex = cumulative
+        ? 0
+        : (lastLearnedIndex - 1).clamp(0, lastLearnedIndex).toInt();
+
+    final firstChunk = primaryChunks[startIndex];
+    final lastChunk = primaryChunks[lastLearnedIndex];
+
+    final start = firstChunk.startGlobalAyahIndex;
+    final end = lastChunk.endGlobalAyahIndex;
+    final count = end - start + 1;
+
+    return MemorizationJourneyTask(
+      task: _taskFromRange(
+        plan: plan,
+        type: 'dailyReview',
+        title: cumulative ? 'مراجعة شاملة' : 'مراجعة قريبة',
+        subtitle: cumulative
+            ? 'مراجعة كل ما حفظته حتى الآن'
+            : 'تثبيت آخر ما حفظته',
+        startGlobalAyahIndex: start,
+        endGlobalAyahIndex: end,
+        scheduledDate: date,
+        timeCode: cumulative
+            ? 'reviewLearnedCumulative_$reviewIndex'
+            : 'reviewLearnedRecent_$reviewIndex',
+        expectedMinutes: _estimateMinutes(
+          ayahsCount: count,
+          type: 'dailyReview',
+        ),
+        minGlobalAyahIndex: plan.scopeStartGlobalAyahIndex,
+        maxGlobalAyahIndex: plan.scopeEndGlobalAyahIndex,
+      ),
+      date: date,
+      timeLabel: 'المراجعة',
+      priority: 2,
+      isProjected: isProjected,
+    );
+  }
+
+  MemorizationJourneyTask _copyJourneyTaskWithDate({
+    required MemorizationJourneyTask item,
+    required DateTime date,
+  }) {
+    final cleanDate = _journeyDateOnly(date);
+
+    final movedTask = item.task.copyWith(
+      scheduledDate: cleanDate,
+      updatedAt: DateTime.now(),
+    );
+
+    return MemorizationJourneyTask(
+      task: movedTask,
+      date: cleanDate,
+      timeLabel: item.timeLabel,
+      priority: item.priority,
+      isProjected: !_sameDay(cleanDate, _journeyDateOnly(DateTime.now())),
+    );
+  }
+
+  Future<MemorizationJourneyTask?> _reviewTaskForOffset({
+    required MemorizationActivePlanModel plan,
+    required List<MemorizationScheduleChunk> primaryChunks,
+    required MemorizationPlanProgressSnapshot progress,
+    required int offset,
+    required DateTime date,
+  }) async {
+    final every = plan.reviewEveryDays.clamp(1, 7).toInt();
+    final firstReviewOffset = progress.completedReviewToday ? every : 0;
+
+    if (offset < firstReviewOffset) return null;
+    if ((offset - firstReviewOffset) % every != 0) return null;
+
+    final reviewSlotIndex = (offset - firstReviewOffset) ~/ every;
+    final reviewIndex = progress.completedReviewCount + reviewSlotIndex;
+
+    if (plan.reviewFromLearnedOnly) {
+      final projectedCompletedNew = math.max(
+        progress.completedNewCount,
+        progress.completedNewCount + offset,
+      );
+
+      final availableCount = math.min(
+        projectedCompletedNew,
+        primaryChunks.length,
+      );
+
+      if (availableCount <= 0) return null;
+
+      final bool fullReviewDay = offset > 0 && offset % 14 == 0;
+
+      if (fullReviewDay) {
+        final start = primaryChunks.first.startGlobalAyahIndex;
+        final end = primaryChunks[availableCount - 1].endGlobalAyahIndex;
+        final ayahsCount = end - start + 1;
+
+        return MemorizationJourneyTask(
+          task: _taskFromRange(
+            plan: plan,
+            type: 'dailyReview',
+            title: 'مراجعة شاملة',
+            subtitle: 'مراجعة كل ما حفظته حتى الآن',
+            startGlobalAyahIndex: start,
+            endGlobalAyahIndex: end,
+            scheduledDate: date,
+            timeCode: 'reviewFull_$reviewIndex',
+            expectedMinutes: _estimateMinutes(
+              ayahsCount: ayahsCount,
+              type: 'dailyReview',
+            ),
+          ),
+          date: date,
+          timeLabel: 'المساء',
+          priority: 2,
+          isProjected: offset != 0,
+        );
+      }
+
+      final chunk = primaryChunks[reviewIndex % availableCount];
+
+      return MemorizationJourneyTask(
+        task: _taskFromChunk(
+          plan: plan,
+          chunk: chunk,
+          index: reviewIndex,
+          type: 'dailyReview',
+          title: 'مراجعة المساء',
+          subtitle: 'تثبيت ${chunk.ayahsCount} آية من آخر ما حفظته',
+          scheduledDate: date,
+          timeCode: 'reviewLearned',
+          expectedMinutes: _estimateMinutes(
+            ayahsCount: chunk.ayahsCount,
+            type: 'dailyReview',
+          ),
+          minGlobalAyahIndex: plan.scopeStartGlobalAyahIndex,
+          maxGlobalAyahIndex: plan.scopeEndGlobalAyahIndex,
+        ),
+        date: date,
+        timeLabel: 'المساء',
+        priority: 2,
+        isProjected: offset != 0,
+      );
+    }
+
+    if (!plan.hasValidReviewRange) return null;
+
+    final reviewChunks = await splitter.split(
+      startGlobalAyahIndex: plan.reviewStartGlobalAyahIndex,
+      endGlobalAyahIndex: plan.reviewEndGlobalAyahIndex,
+      targetSessions: _reviewSessionsCountForPlan(plan),
+      pagesPerSession: plan.dailyReviewPages > 0 ? plan.dailyReviewPages : null,
+    );
+
+    if (reviewIndex >= reviewChunks.length) return null;
+
+    final chunk = reviewChunks[reviewIndex];
+
+    return MemorizationJourneyTask(
+      task: _taskFromChunk(
+        plan: plan,
+        chunk: chunk,
+        index: reviewIndex,
+        type: 'dailyReview',
+        title: 'مراجعة المساء',
+        subtitle: 'مراجعة ${chunk.ayahsCount} آية من ${plan.reviewScopeTitle}',
+        scheduledDate: date,
+        timeCode: 'reviewSeparate',
+        expectedMinutes: _estimateMinutes(
+          ayahsCount: chunk.ayahsCount,
+          type: 'dailyReview',
+        ),
+        minGlobalAyahIndex: plan.reviewStartGlobalAyahIndex,
+        maxGlobalAyahIndex: plan.reviewEndGlobalAyahIndex,
+      ),
+      date: date,
+      timeLabel: 'المساء',
+      priority: 2,
+      isProjected: offset != 0,
+    );
+  }
+
+  MemorizationJourneyTask? _testTaskForOffset({
+    required MemorizationActivePlanModel plan,
+    required String action,
+    required List<MemorizationScheduleChunk> primaryChunks,
+    required int completedPrimaryCount,
+    required int completedSelfTestCount,
+    required bool completedSelfTestToday,
+    required int offset,
+    required DateTime date,
+  }) {
+    if (action != 'strengthenAndTest' && plan.plannedTestsCount <= 0) {
+      return null;
+    }
+
+    final testsCount = _plannedTestsForPlan(plan: plan);
+    if (testsCount <= 0) return null;
+    if (completedSelfTestCount >= testsCount) return null;
+    if (primaryChunks.isEmpty) return null;
+
+    final interval = math.max(
+      2,
+      (math.max(1, primaryChunks.length) / testsCount).ceil(),
+    );
+
+    final firstEligibleOffset = completedSelfTestToday ? 1 : 1;
+    if (offset < firstEligibleOffset) return null;
+
+    final shiftedOffset = offset - firstEligibleOffset;
+    if (shiftedOffset % interval != 0) return null;
+
+    final testIndex = completedSelfTestCount + (shiftedOffset ~/ interval);
+    if (testIndex >= testsCount) return null;
+
+    final completedBasedIndex = completedPrimaryCount > 0
+        ? math.min(
+            completedPrimaryCount - 1,
+            math.max(
+              0,
+              ((testIndex + 1) * completedPrimaryCount / testsCount).ceil() - 1,
+            ),
+          )
+        : math.max(
+            0,
+            ((testIndex + 1) * primaryChunks.length / testsCount).ceil() - 1,
+          );
+
+    final safeChunkIndex = completedBasedIndex
+        .clamp(0, primaryChunks.length - 1)
+        .toInt();
+
+    final sourceChunk = primaryChunks[safeChunkIndex];
+    final testRange = _testRangeFromChunk(
+      chunk: sourceChunk,
+      testIndex: testIndex,
+    );
+    final variation = _testVariation(testIndex);
+
+    return MemorizationJourneyTask(
+      task: _taskFromRange(
+        plan: plan,
+        type: 'selfTest',
+        title: 'اختبار تثبيت ${testIndex + 1}',
+        subtitle: variation.subtitle,
+        startGlobalAyahIndex: testRange.start,
+        endGlobalAyahIndex: testRange.end,
+        scheduledDate: date,
+        timeCode: 'test_${variation.code}_$testIndex',
+        expectedMinutes: _estimateMinutes(
+          ayahsCount: testRange.ayahsCount,
+          type: 'selfTest',
+        ),
+      ),
+      date: date,
+      timeLabel: 'اختبار',
+      priority: 3,
+      isProjected: offset != 0,
+    );
+  }
+
+  MemorizationTodayTaskModel _taskFromChunk({
+    required MemorizationActivePlanModel plan,
+    required MemorizationScheduleChunk chunk,
+    required int index,
+    required String type,
+    required String title,
+    required String subtitle,
+    required DateTime scheduledDate,
+    required String timeCode,
+    required int expectedMinutes,
+    int? minGlobalAyahIndex,
+    int? maxGlobalAyahIndex,
+  }) {
+    return _taskFromRange(
+      plan: plan,
+      type: type,
+      title: title,
+      subtitle: subtitle,
+      startGlobalAyahIndex: chunk.startGlobalAyahIndex,
+      endGlobalAyahIndex: chunk.endGlobalAyahIndex,
+      scheduledDate: scheduledDate,
+      timeCode: '${timeCode}_${chunk.index}',
+      expectedMinutes: expectedMinutes,
+      minGlobalAyahIndex: minGlobalAyahIndex,
+      maxGlobalAyahIndex: maxGlobalAyahIndex,
+    );
+  }
+
+  MemorizationTodayTaskModel _taskFromRange({
+    required MemorizationActivePlanModel plan,
+    required String type,
+    required String title,
+    required String subtitle,
+    required int startGlobalAyahIndex,
+    required int endGlobalAyahIndex,
+    required DateTime scheduledDate,
+    required String timeCode,
+    required int expectedMinutes,
+    int? minGlobalAyahIndex,
+    int? maxGlobalAyahIndex,
+  }) {
+    final minBound = (minGlobalAyahIndex ?? plan.scopeStartGlobalAyahIndex)
+        .clamp(0, 6235)
+        .toInt();
+
+    final maxBound = (maxGlobalAyahIndex ?? plan.scopeEndGlobalAyahIndex)
+        .clamp(minBound, 6235)
+        .toInt();
+
+    final safeStart = startGlobalAyahIndex.clamp(minBound, maxBound).toInt();
+    final safeEnd = endGlobalAyahIndex.clamp(safeStart, maxBound).toInt();
+    final cleanDate = _dateOnly(scheduledDate);
+
+    return MemorizationTodayTaskModel(
+      id: 'journey_${plan.id}_v${plan.planVersion}_'
+          '${timeCode}_${safeStart}_$safeEnd',
+      planId: plan.id,
+      type: type,
+      title: title,
+      subtitle: subtitle,
+      scopeTitle: rangeResolver.titleForRange(safeStart, safeEnd),
+      startGlobalAyahIndex: safeStart,
+      endGlobalAyahIndex: safeEnd,
+      expectedMinutes: expectedMinutes,
+      isCompleted: false,
+      status: MemorizationTodayTaskModel.statusNotStarted,
+      scheduledDate: cleanDate,
+      createdAt: cleanDate,
+      updatedAt: cleanDate,
+    );
+  }
+}

@@ -1,0 +1,644 @@
+import 'package:flutter/material.dart';
+
+import '../../../data/models/memorization_active_plan_model.dart';
+import '../../../data/models/memorization_plan_intensity.dart';
+import '../../../data/models/memorization_test_preferences.dart';
+import '../../../data/services/memorization_plan_rescheduler.dart';
+
+class MemorizationEditPlanDialog extends StatefulWidget {
+  const MemorizationEditPlanDialog({super.key, required this.plan});
+
+  final MemorizationActivePlanModel plan;
+
+  @override
+  State<MemorizationEditPlanDialog> createState() =>
+      _MemorizationEditPlanDialogState();
+}
+
+class _MemorizationEditPlanDialogState
+    extends State<MemorizationEditPlanDialog> {
+  late final TextEditingController remainingDaysController;
+  late final TextEditingController dailyPagesController;
+
+  late int restDays;
+  late MemorizationTestStyle testStyle;
+  late MemorizationTestDifficultyPreference testDifficulty;
+  late int questionsCount;
+  late Set<String> allowedQuestionTypes;
+  MemorizationPlanIntensity? selectedIntensity;
+
+  @override
+  void initState() {
+    super.initState();
+    final plan = widget.plan;
+    remainingDaysController = TextEditingController(
+      text: (plan.targetLearningDays - plan.currentPlanDay + 1)
+          .clamp(1, 3650)
+          .toString(),
+    );
+    dailyPagesController = TextEditingController(
+      text: plan.dailyNewPages > 0 ? _compactNumber(plan.dailyNewPages) : '',
+    );
+    restDays = plan.weeklyRestDays;
+    testStyle = plan.testPreferences.style;
+    testDifficulty = plan.testPreferences.difficulty;
+    questionsCount = plan.testPreferences.questionsPerTest;
+    allowedQuestionTypes = plan.testPreferences.allowedQuestionTypeCodes
+        .toSet();
+  }
+
+  @override
+  void dispose() {
+    remainingDaysController.dispose();
+    dailyPagesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final textColor = _dialogTextColor(context);
+    final availableHeight = MediaQuery.sizeOf(context).height * 0.88;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        backgroundColor: isDark ? colors.secondary : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 520,
+            maxHeight: availableHeight,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'إعادة جدولة المتبقي',
+                  textAlign: TextAlign.right,
+                  maxLines: 3,
+                  softWrap: true,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'سنغيّر المهام القادمة فقط، ونحتفظ بكل تقدمك ونتائجك السابقة.',
+                  textAlign: TextAlign.right,
+                  maxLines: 3,
+                  softWrap: true,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: textColor.withOpacity(0.64),
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: SingleChildScrollView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _EditNumberField(
+                          fieldKey: const Key('edit_plan_remaining_days'),
+                          controller: remainingDaysController,
+                          title: 'عدد الأيام المتبقية',
+                          subtitle:
+                              'اكتب المدة الجديدة للجزء الذي لم يكتمل فقط.',
+                          keyboardType: TextInputType.number,
+                        ),
+                        const SizedBox(height: 12),
+                        _EditNumberField(
+                          fieldKey: const Key('edit_plan_daily_pages'),
+                          controller: dailyPagesController,
+                          title: 'صفحات اليوم',
+                          subtitle:
+                              'اختياري؛ اتركها كما هي ليحسب النظام الحمل المناسب.',
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _EditSectionTitle(
+                          title: 'ضغط الخطة',
+                          subtitle:
+                              'اختر تلقائي، أو حدد الحد الأقصى للجلسات الداخلية في اليوم.',
+                        ),
+                        const SizedBox(height: 8),
+                        _ChoiceWrap(
+                          children: [
+                            _EditChoiceTile(
+                              key: const Key('edit_intensity_auto'),
+                              title: 'تلقائي',
+                              subtitle: 'النظام يوازن الحمل حسب المدة.',
+                              selected: selectedIntensity == null,
+                              onTap: () {
+                                setState(() => selectedIntensity = null);
+                              },
+                            ),
+                            for (final intensity
+                                in MemorizationPlanIntensity.values)
+                              _EditChoiceTile(
+                                key: Key('edit_intensity_${intensity.name}'),
+                                title: intensity.title,
+                                subtitle: _intensitySubtitle(intensity),
+                                selected: selectedIntensity == intensity,
+                                onTap: () {
+                                  setState(() => selectedIntensity = intensity);
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        const _EditSectionTitle(
+                          title: 'أيام الراحة',
+                          subtitle:
+                              'تُوزع تلقائيًا خلال الأسبوع بدون أيام متتالية.',
+                        ),
+                        const SizedBox(height: 8),
+                        _ChoiceWrap(
+                          children: [
+                            for (int value = 0; value <= 3; value++)
+                              _EditChoiceTile(
+                                key: Key('edit_rest_$value'),
+                                title: value == 0
+                                    ? 'بدون راحة ثابتة'
+                                    : value == 1
+                                    ? 'يوم راحة'
+                                    : '$value أيام راحة',
+                                subtitle: value == 0
+                                    ? 'يستمر الجدول بدون يوم أسبوعي ثابت.'
+                                    : 'توزيع هادئ يحافظ على نهاية الخطة.',
+                                selected: restDays == value,
+                                onTap: () {
+                                  setState(() => restDays = value);
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        const _EditSectionTitle(
+                          title: 'إعدادات الاختبارات',
+                          subtitle:
+                              'سيتم توزيع الاختبارات تلقائيًا بذكاء حسب تقدمك، ويكون يوم الاختبار بلا حفظ جديد.',
+                        ),
+                        const SizedBox(height: 8),
+                        _ChoiceWrap(
+                          children: [
+                            for (final style in MemorizationTestStyle.values)
+                              _EditChoiceTile(
+                                key: Key('edit_test_style_${style.code}'),
+                                title: style.title,
+                                subtitle: _testStyleSubtitle(style),
+                                selected: testStyle == style,
+                                onTap: () {
+                                  setState(() => testStyle = style);
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        const _EditSectionTitle(
+                          title: 'عدد الأسئلة في كل اختبار',
+                          subtitle:
+                              'اختر طول الاختبار نفسه؛ عدد مرات الاختبار وتوقيتها يحددهما النظام.',
+                        ),
+                        const SizedBox(height: 8),
+                        _ChoiceWrap(
+                          children: [
+                            for (final value in const <int>[5, 10, 15, 20])
+                              _EditChoiceTile(
+                                key: Key('edit_test_questions_$value'),
+                                title: '$value أسئلة',
+                                subtitle: _questionsSubtitle(value),
+                                selected: questionsCount == value,
+                                onTap: () {
+                                  setState(() => questionsCount = value);
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        const _EditSectionTitle(
+                          title: 'مستوى الاختبار',
+                          subtitle:
+                              'يمكن للنظام ضبط الصعوبة من نتائجك، أو تثبيتها على المستوى الذي تختاره.',
+                        ),
+                        const SizedBox(height: 8),
+                        _ChoiceWrap(
+                          children: [
+                            for (final difficulty
+                                in MemorizationTestDifficultyPreference.values)
+                              _EditChoiceTile(
+                                key: Key(
+                                  'edit_test_difficulty_${difficulty.code}',
+                                ),
+                                title: difficulty.title,
+                                subtitle: _difficultySubtitle(difficulty),
+                                selected: testDifficulty == difficulty,
+                                onTap: () {
+                                  setState(() => testDifficulty = difficulty);
+                                },
+                              ),
+                          ],
+                        ),
+                        if (testStyle == MemorizationTestStyle.custom) ...[
+                          const SizedBox(height: 14),
+                          const _EditSectionTitle(
+                            title: 'أنواع الأسئلة المسموح بها',
+                            subtitle:
+                                'اختر نوعًا واحدًا على الأقل، وسيخلط النظام الأنواع المختارة داخل الاختبار.',
+                          ),
+                          const SizedBox(height: 8),
+                          _ChoiceWrap(
+                            children: [
+                              for (final code
+                                  in MemorizationTestQuestionCodes
+                                      .userSelectable)
+                                _EditChoiceTile(
+                                  key: Key('edit_question_type_$code'),
+                                  title: MemorizationTestQuestionCodes.title(
+                                    code,
+                                  ),
+                                  subtitle:
+                                      'مسموح ظهوره في الاختبارات القادمة.',
+                                  selected: allowedQuestionTypes.contains(code),
+                                  onTap: () {
+                                    setState(() {
+                                      if (allowedQuestionTypes.contains(code)) {
+                                        if (allowedQuestionTypes.length > 1) {
+                                          allowedQuestionTypes.remove(code);
+                                        }
+                                      } else {
+                                        allowedQuestionTypes.add(code);
+                                      }
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DialogActionButton(
+                        key: const Key('edit_plan_submit'),
+                        text: 'إعادة توزيع المتبقي',
+                        isPrimary: true,
+                        onTap: _submit,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _DialogActionButton(
+                        key: const Key('edit_plan_cancel'),
+                        text: 'إلغاء',
+                        isPrimary: false,
+                        onTap: () => Navigator.pop(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _submit() {
+    final days = int.tryParse(remainingDaysController.text.trim());
+    if (days == null || days <= 0) return;
+
+    Navigator.pop(
+      context,
+      MemorizationPlanRescheduleRequest(
+        remainingLearningDays: days,
+        dailyPages: double.tryParse(dailyPagesController.text.trim()),
+        weeklyRestDays: restDays,
+        intensity: selectedIntensity,
+        testPreferences: MemorizationTestPreferences(
+          style: testStyle,
+          questionsPerTest: questionsCount,
+          difficulty: testDifficulty,
+          allowedQuestionTypeCodes: allowedQuestionTypes.toList(),
+        ),
+      ),
+    );
+  }
+
+  static String _compactNumber(double value) {
+    if (value == value.roundToDouble()) return value.round().toString();
+    return value.toStringAsFixed(1);
+  }
+
+  static String _intensitySubtitle(MemorizationPlanIntensity intensity) {
+    switch (intensity) {
+      case MemorizationPlanIntensity.normal:
+        return 'حمل هادئ بجلسة داخلية واحدة غالبًا.';
+      case MemorizationPlanIntensity.strong:
+        return 'حمل أقوى مع تقسيم داخلي محدود.';
+      case MemorizationPlanIntensity.intensive:
+        return 'خطة مكثفة تحتاج وقتًا وتركيزًا يوميًا.';
+      case MemorizationPlanIntensity.extreme:
+        return 'أعلى ضغط، مناسب للحافظ المتمرس فقط.';
+    }
+  }
+
+  static String _testStyleSubtitle(MemorizationTestStyle style) {
+    switch (style) {
+      case MemorizationTestStyle.system:
+        return 'النظام يختار الشكل الأنسب لكل اختبار حسب المرحلة.';
+      case MemorizationTestStyle.smartMixed:
+        return 'خليط متوازن من الإكمال والاختيارات والترتيب والتسميع.';
+      case MemorizationTestStyle.multipleChoice:
+        return 'أسئلة سريعة باختيارات من نطاق الحفظ نفسه.';
+      case MemorizationTestStyle.ordering:
+        return 'ترتيب الآيات وكلمات الآيات القصيرة والمتوسطة.';
+      case MemorizationTestStyle.completionAndRecitation:
+        return 'إكمال مواضع مختارة مع تسميع وتقييم ذاتي.';
+      case MemorizationTestStyle.hiddenMushaf:
+        return 'يفتح المصحف على النطاق مع تفعيل وضع الإخفاء.';
+      case MemorizationTestStyle.custom:
+        return 'أنت تحدد أنواع الأسئلة، والنظام يحدد مواعيد الاختبارات.';
+    }
+  }
+
+  static String _questionsSubtitle(int value) {
+    if (value <= 5) return 'اختبار قصير وخفيف.';
+    if (value <= 10) return 'مدة متوسطة مناسبة للمتابعة.';
+    if (value <= 15) return 'اختبار قوي وتغطية أوسع.';
+    return 'اختبار مكثف للمراجعات الكبيرة.';
+  }
+
+  static String _difficultySubtitle(
+    MemorizationTestDifficultyPreference difficulty,
+  ) {
+    switch (difficulty) {
+      case MemorizationTestDifficultyPreference.smart:
+        return 'يتغير حسب أخطائك ومواضع قوتك وضعفك.';
+      case MemorizationTestDifficultyPreference.easy:
+        return 'أسئلة مباشرة لتثبيت الأساس.';
+      case MemorizationTestDifficultyPreference.medium:
+        return 'توازن بين الاستدعاء والاختيارات.';
+      case MemorizationTestDifficultyPreference.hard:
+        return 'استدعاء أوسع وتسميع واختيارات أقرب.';
+    }
+  }
+}
+
+class _EditNumberField extends StatelessWidget {
+  const _EditNumberField({
+    required this.fieldKey,
+    required this.controller,
+    required this.title,
+    required this.subtitle,
+    required this.keyboardType,
+  });
+
+  final Key fieldKey;
+  final TextEditingController controller;
+  final String title;
+  final String subtitle;
+  final TextInputType keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final textColor = _dialogTextColor(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _EditSectionTitle(title: title, subtitle: subtitle),
+        const SizedBox(height: 7),
+        TextField(
+          key: fieldKey,
+          controller: controller,
+          keyboardType: keyboardType,
+          textAlign: TextAlign.right,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: textColor.withOpacity(0.045),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EditSectionTitle extends StatelessWidget {
+  const _EditSectionTitle({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final textColor = _dialogTextColor(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          textAlign: TextAlign.right,
+          maxLines: 3,
+          softWrap: true,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: textColor,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          subtitle,
+          textAlign: TextAlign.right,
+          maxLines: 3,
+          softWrap: true,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: textColor.withOpacity(0.62),
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChoiceWrap extends StatelessWidget {
+  const _ChoiceWrap({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = constraints.maxWidth < 370
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 8) / 2;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final child in children)
+              SizedBox(width: tileWidth, child: child),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _EditChoiceTile extends StatelessWidget {
+  const _EditChoiceTile({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textColor = _dialogTextColor(context);
+    return Material(
+      color: selected
+          ? colors.primary.withOpacity(0.11)
+          : textColor.withOpacity(0.035),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 76),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        title,
+                        textAlign: TextAlign.right,
+                        maxLines: 3,
+                        softWrap: true,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: textColor,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        textAlign: TextAlign.right,
+                        maxLines: 3,
+                        softWrap: true,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: textColor.withOpacity(0.60),
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                  color: selected
+                      ? colors.primary
+                      : textColor.withOpacity(0.30),
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DialogActionButton extends StatelessWidget {
+  const _DialogActionButton({
+    super.key,
+    required this.text,
+    required this.isPrimary,
+    required this.onTap,
+  });
+
+  final String text;
+  final bool isPrimary;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textColor = _dialogTextColor(context);
+    return Material(
+      color: isPrimary ? colors.primary : textColor.withOpacity(0.07),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 50),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            child: Center(
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                softWrap: true,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: isPrimary ? colors.onPrimary : textColor,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Color _dialogTextColor(BuildContext context) {
+  final theme = Theme.of(context);
+  return theme.brightness == Brightness.dark
+      ? theme.colorScheme.surface
+      : const Color(0xFF18385F);
+}

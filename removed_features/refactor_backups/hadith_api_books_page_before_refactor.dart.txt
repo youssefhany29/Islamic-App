@@ -1,0 +1,1330 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/shared/widgets/app_main_components/custom_app_bar.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+
+import 'package:islamic_app/features/hadith/data/datasources/hadith_local_data.dart';
+import 'package:islamic_app/features/hadith/data/models/hadith_category_model.dart';
+import 'package:islamic_app/features/hadith/data/services/hadith_api_service.dart';
+import 'package:islamic_app/features/hadith/data/services/hadith_custom_storage_service.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+
+bool _hadithLibraryLargeScreen(BuildContext context) {
+  final Size size = MediaQuery.sizeOf(context);
+  return size.shortestSide >= 600 || (size.width >= 700 && size.height >= 500);
+}
+
+class HadithApiBooksPage extends StatefulWidget {
+  const HadithApiBooksPage({super.key});
+
+  @override
+  State<HadithApiBooksPage> createState() => _HadithApiBooksPageState();
+}
+
+class _HadithApiBooksPageState extends State<HadithApiBooksPage> {
+  final HadithApiService _service = const HadithApiService();
+  final HadithCustomStorageService _customStorageService =
+      const HadithCustomStorageService();
+
+  final TextEditingController _searchController = TextEditingController();
+
+  late Future<List<HadithApiBookModel>> _booksFuture;
+  late Future<List<HadithApiHadithModel>> _hadithsFuture;
+
+  HadithApiBookModel _selectedBook = HadithApiService.supportedBooks.first;
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+
+    _booksFuture = _service.getBooks();
+    _loadHadiths();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _loadHadiths() {
+    _hadithsFuture = _service.getHadiths(
+      book: _selectedBook,
+      arabicSearch: _searchQuery,
+      limit: 80,
+    );
+  }
+
+  void _selectBook(HadithApiBookModel book) {
+    AppHaptics.tap(context);
+
+    setState(() {
+      _selectedBook = book;
+      _loadHadiths();
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value;
+      _loadHadiths();
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+
+    setState(() {
+      _searchQuery = '';
+      _loadHadiths();
+    });
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _loadHadiths();
+    });
+
+    await _hadithsFuture;
+  }
+
+  Future<void> _addHadithToCards(HadithApiHadithModel hadith) async {
+    AppHaptics.tap(context);
+
+    final result = await showModalBottomSheet<_ImportHadithResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return _ImportHadithSheet(
+          hadith: hadith,
+          categories: HadithLocalData.categories
+              .where((category) => category.id != HadithLocalData.customId)
+              .toList(),
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    await _customStorageService.addCustomHadith(
+      categoryId: result.category.id,
+      title: hadith.bookName,
+      text: hadith.textArabic,
+      source: hadith.bookName,
+      reference: [
+        if (hadith.chapter != null) hadith.chapter!,
+        if (hadith.hadithNumber != null) 'رقم الحديث: ${hadith.hadithNumber}',
+      ].join(' • '),
+      grade: hadith.status,
+      book: hadith.bookName,
+      chapter: hadith.chapter,
+      benefit: result.benefit,
+      lesson: result.lesson,
+    );
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        elevation: 0,
+        margin: EdgeInsets.only(left: 24.w, right: 24.w, bottom: 18.h),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        content: Text(
+          'تمت إضافة الحديث إلى ${result.category.title}',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: AppTextStyles.caption(
+            context,
+          ).copyWith(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        duration: const Duration(milliseconds: 1600),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      appBar: const CustomAppBar(
+        category: CustomAppBarCategory(text: 'مكتبة الحديث'),
+      ),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(
+              isLargeScreen ? 24 : 14.w,
+              isLargeScreen ? 14 : 10.h,
+              isLargeScreen ? 24 : 14.w,
+              isLargeScreen ? 28 : 18.h,
+            ),
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            children: [
+              _IntroCard(selectedBook: _selectedBook),
+              SizedBox(height: isLargeScreen ? 12 : 12.h),
+              FutureBuilder<List<HadithApiBookModel>>(
+                future: _booksFuture,
+                builder: (context, snapshot) {
+                  final books =
+                      snapshot.data ?? HadithApiService.supportedBooks;
+
+                  return _BooksStrip(
+                    books: books,
+                    selectedBook: _selectedBook,
+                    onSelected: _selectBook,
+                  );
+                },
+              ),
+              SizedBox(height: isLargeScreen ? 12 : 12.h),
+              _HadithApiSearchField(
+                controller: _searchController,
+                value: _searchQuery,
+                onChanged: _onSearchChanged,
+                onClear: _clearSearch,
+              ),
+              SizedBox(height: isLargeScreen ? 12 : 12.h),
+              _SectionTitle(
+                title: 'أحاديث ${_selectedBook.bookName}',
+                icon: Icons.menu_book_rounded,
+              ),
+              SizedBox(height: isLargeScreen ? 10 : 10.h),
+              FutureBuilder<List<HadithApiHadithModel>>(
+                future: _hadithsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Padding(
+                      padding: EdgeInsets.symmetric(
+                        vertical: isLargeScreen ? 30 : 26.h,
+                      ),
+                      child: const Center(child: CircularProgressIndicator()),
+                    );
+                  }
+
+                  if (snapshot.hasError) {
+                    return _ErrorCard(
+                      message:
+                          'تعذر تحميل الأحاديث. لو كنت فتحت هذا الكتاب قبل كده، سيتم استخدام الكاش تلقائيًا عند توفره.',
+                      details: snapshot.error.toString(),
+                      onRetry: () {
+                        AppHaptics.tap(context);
+                        setState(() {
+                          _loadHadiths();
+                        });
+                      },
+                    );
+                  }
+
+                  final hadiths = snapshot.data ?? [];
+
+                  if (hadiths.isEmpty) {
+                    return const _EmptyResultsCard(
+                      text: 'لا توجد أحاديث مطابقة للبحث الحالي.',
+                    );
+                  }
+
+                  return _HadithResultsLayout(
+                    hadiths: hadiths,
+                    onAddToCards: _addHadithToCards,
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportHadithResult {
+  const _ImportHadithResult({
+    required this.category,
+    required this.benefit,
+    required this.lesson,
+  });
+
+  final HadithCategoryModel category;
+  final String benefit;
+  final String lesson;
+}
+
+class _ImportHadithSheet extends StatefulWidget {
+  const _ImportHadithSheet({required this.hadith, required this.categories});
+
+  final HadithApiHadithModel hadith;
+  final List<HadithCategoryModel> categories;
+
+  @override
+  State<_ImportHadithSheet> createState() => _ImportHadithSheetState();
+}
+
+class _ImportHadithSheetState extends State<_ImportHadithSheet> {
+  late HadithCategoryModel _selectedCategory;
+  late TextEditingController _benefitController;
+  late TextEditingController _lessonController;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _selectedCategory = widget.categories.first;
+
+    _benefitController = TextEditingController(
+      text: 'يساعدني هذا الحديث على تحويل المعنى إلى سلوك يومي واضح.',
+    );
+
+    _lessonController = TextEditingController(
+      text:
+          'أتعلم منه أن أختار معنى واحدًا وأطبقه اليوم بدل الاكتفاء بالقراءة.',
+    );
+  }
+
+  @override
+  void dispose() {
+    _benefitController.dispose();
+    _lessonController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (_benefitController.text.trim().isEmpty ||
+        _lessonController.text.trim().isEmpty) {
+      return;
+    }
+
+    Navigator.pop(
+      context,
+      _ImportHadithResult(
+        category: _selectedCategory,
+        benefit: _benefitController.text.trim(),
+        lesson: _lessonController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: isLargeScreen ? 18 : 12.w,
+            right: isLargeScreen ? 18 : 12.w,
+            bottom:
+                MediaQuery.of(context).viewInsets.bottom +
+                (isLargeScreen ? 18 : 12.h),
+          ),
+          child: Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(isLargeScreen ? 18 : 14.w),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondary,
+              borderRadius: BorderRadius.circular(isLargeScreen ? 28 : 24.r),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.28),
+              ),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'إضافة الحديث إلى الكروت',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    style: AppTextStyles.body(context).copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: theme.colorScheme.surface,
+                    ),
+                  ),
+                  SizedBox(height: isLargeScreen ? 7 : 6.h),
+                  Text(
+                    'اختار القسم، وعدّل الفائدة والنقطة المستفادة قبل الإضافة.',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    style: AppTextStyles.caption(context).copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.surface.withOpacity(0.62),
+                      height: 1.45,
+                    ),
+                  ),
+                  SizedBox(height: isLargeScreen ? 14 : 12.h),
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: isLargeScreen ? 8 : 8.w,
+                    runSpacing: isLargeScreen ? 8 : 8.h,
+                    children: widget.categories.map((category) {
+                      final selected = category.id == _selectedCategory.id;
+
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(
+                          isLargeScreen ? 12 : 12.r,
+                        ),
+                        onTap: () {
+                          AppHaptics.tap(context);
+                          setState(() {
+                            _selectedCategory = category;
+                          });
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isLargeScreen ? 12 : 10.w,
+                            vertical: isLargeScreen ? 8 : 7.h,
+                          ),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.primary.withOpacity(0.07),
+                            borderRadius: BorderRadius.circular(
+                              isLargeScreen ? 12 : 12.r,
+                            ),
+                          ),
+                          child: Text(
+                            category.title,
+                            textDirection: TextDirection.rtl,
+                            style: AppTextStyles.caption(context).copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: selected
+                                  ? Colors.white
+                                  : theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  SizedBox(height: isLargeScreen ? 14 : 12.h),
+                  _ImportTextField(
+                    controller: _benefitController,
+                    label: 'ماذا يضيف لحياتك؟',
+                    maxLines: 3,
+                  ),
+                  SizedBox(height: isLargeScreen ? 11 : 10.h),
+                  _ImportTextField(
+                    controller: _lessonController,
+                    label: 'النقطة التي نتعلمها',
+                    maxLines: 3,
+                  ),
+                  SizedBox(height: isLargeScreen ? 14 : 12.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _save,
+                      style: ElevatedButton.styleFrom(
+                        elevation: 0,
+                        backgroundColor: theme.colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: isLargeScreen ? 13 : 11.h,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            isLargeScreen ? 16 : 15.r,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Icon(
+                            Icons.add_rounded,
+                            size: isLargeScreen ? 20 : 18.sp,
+                          ),
+                          SizedBox(width: isLargeScreen ? 7 : 6.w),
+                          Text(
+                            'إضافة إلى ${_selectedCategory.title}',
+                            textDirection: TextDirection.rtl,
+                            style: AppTextStyles.caption(
+                              context,
+                            ).copyWith(fontWeight: FontWeight.w800),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportTextField extends StatelessWidget {
+  const _ImportTextField({
+    required this.controller,
+    required this.label,
+    required this.maxLines,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return TextField(
+      controller: controller,
+      maxLines: maxLines,
+      textAlign: TextAlign.right,
+      textDirection: TextDirection.rtl,
+      cursorColor: theme.colorScheme.primary,
+      style: AppTextStyles.caption(context).copyWith(
+        fontWeight: FontWeight.w600,
+        color: theme.colorScheme.surface,
+        height: 1.45,
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        alignLabelWithHint: true,
+        labelStyle: AppTextStyles.caption(context).copyWith(
+          fontWeight: FontWeight.w700,
+          color: theme.colorScheme.primary,
+        ),
+        filled: true,
+        fillColor: theme.colorScheme.primary.withOpacity(0.055),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: isLargeScreen ? 14 : 12.w,
+          vertical: isLargeScreen ? 12 : 10.h,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(isLargeScreen ? 16 : 14.r),
+          borderSide: BorderSide(
+            color: theme.colorScheme.outline.withOpacity(0.28),
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(isLargeScreen ? 16 : 14.r),
+          borderSide: BorderSide(
+            color: theme.colorScheme.outline.withOpacity(0.28),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(isLargeScreen ? 16 : 14.r),
+          borderSide: BorderSide(color: theme.colorScheme.primary, width: 1.2),
+        ),
+      ),
+    );
+  }
+}
+
+class _IntroCard extends StatelessWidget {
+  const _IntroCard({required this.selectedBook});
+
+  final HadithApiBookModel selectedBook;
+
+  void _showLibraryInfo(BuildContext context) {
+    AppHaptics.tap(context);
+
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: theme.colorScheme.secondary,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(isLargeScreen ? 24 : 20.r),
+            ),
+            title: Text(
+              'ماذا يحدث عند إضافة الحديث؟',
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.body(context).copyWith(
+                fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface,
+                height: 1.35,
+              ),
+            ),
+            content: Text(
+              'عند إضافة الحديث إلى الكروت، سيظهر داخل القسم الذي تختاره، ويمكنك حفظه ومراجعته من خلال خطة الحفظ، درّبني على الحفظ، مراجعة اليوم، تحليل الحفظ، وتقويم المراجعة.',
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.caption(context).copyWith(
+                fontWeight: FontWeight.w500,
+                color: theme.colorScheme.surface.withOpacity(0.72),
+                height: 1.65,
+              ),
+            ),
+            actionsAlignment: MainAxisAlignment.start,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(
+                  'فهمت',
+                  style: AppTextStyles.caption(context).copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+    final double radius = isLargeScreen ? 22 : 20.r;
+    final double padding = isLargeScreen ? 14 : 13.w;
+    final double iconBox = isLargeScreen ? 40 : 38.w;
+    final double iconSize = isLargeScreen ? 21 : 20.sp;
+    final double actionBox = isLargeScreen ? 32 : 30.w;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(padding),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary,
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: [
+            BoxShadow(
+              color: theme.colorScheme.primary.withOpacity(0.18),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: iconBox,
+              height: iconBox,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(isLargeScreen ? 14 : 13.r),
+              ),
+              child: Icon(
+                Icons.menu_book_rounded,
+                color: Colors.white,
+                size: iconSize,
+              ),
+            ),
+            SizedBox(width: isLargeScreen ? 10 : 9.w),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      'مكتبة الأحاديث',
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      locale: const Locale('ar'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.body(context).copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        height: 1.3,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isLargeScreen ? 3 : 3.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      'تصفح الكتب وابحث داخل الأحاديث وأضف المناسب لك.',
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      locale: const Locale('ar'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.caption(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white.withOpacity(0.78),
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: isLargeScreen ? 8 : 8.w),
+            InkWell(
+              onTap: () => _showLibraryInfo(context),
+              borderRadius: BorderRadius.circular(isLargeScreen ? 11 : 10.r),
+              child: Container(
+                width: actionBox,
+                height: actionBox,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(
+                    isLargeScreen ? 11 : 10.r,
+                  ),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.18),
+                    width: 0.8,
+                  ),
+                ),
+                child: Icon(
+                  Icons.info_outline_rounded,
+                  color: Colors.white,
+                  size: isLargeScreen ? 17 : 16.sp,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BooksStrip extends StatelessWidget {
+  const _BooksStrip({
+    required this.books,
+    required this.selectedBook,
+    required this.onSelected,
+  });
+
+  final List<HadithApiBookModel> books;
+  final HadithApiBookModel selectedBook;
+  final ValueChanged<HadithApiBookModel> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return SizedBox(
+      height: isLargeScreen ? 38 : 36.h,
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          itemCount: books.length,
+          separatorBuilder: (_, __) => SizedBox(width: isLargeScreen ? 8 : 7.w),
+          itemBuilder: (context, index) {
+            final book = books[index];
+            final selected = book.bookSlug == selectedBook.bookSlug;
+
+            return _BookChip(
+              title: book.bookName,
+              selected: selected,
+              onTap: () => onSelected(book),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _BookChip extends StatelessWidget {
+  const _BookChip({
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(isLargeScreen ? 12 : 12.r),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: EdgeInsets.symmetric(horizontal: isLargeScreen ? 12 : 10.w),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.secondary,
+          borderRadius: BorderRadius.circular(isLargeScreen ? 12 : 12.r),
+          border: Border.all(
+            color: selected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outline.withOpacity(0.30),
+          ),
+        ),
+        child: Text(
+          title,
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.rtl,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTextStyles.caption(context).copyWith(
+            fontWeight: FontWeight.w800,
+            color: selected ? Colors.white : theme.colorScheme.surface,
+            height: 1.2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HadithApiSearchField extends StatelessWidget {
+  const _HadithApiSearchField({
+    required this.controller,
+    required this.value,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final String value;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        textAlign: TextAlign.right,
+        textDirection: TextDirection.rtl,
+        cursorColor: theme.colorScheme.primary,
+        style: AppTextStyles.caption(context).copyWith(
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.surface,
+          height: 1.4,
+        ),
+        decoration: InputDecoration(
+          hintText: 'ابحث داخل الكتاب المختار...',
+          hintTextDirection: TextDirection.rtl,
+          prefixIcon: value.trim().isEmpty
+              ? Icon(
+                  Icons.search_rounded,
+                  color: theme.colorScheme.primary,
+                  size: isLargeScreen ? 26 : 21.sp,
+                )
+              : IconButton(
+                  onPressed: onClear,
+                  icon: Icon(
+                    Icons.close_rounded,
+                    color: theme.colorScheme.primary,
+                    size: isLargeScreen ? 24 : 20.sp,
+                  ),
+                ),
+          filled: true,
+          fillColor: theme.colorScheme.secondary,
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: isLargeScreen ? 18 : 12.w,
+            vertical: isLargeScreen ? 16 : 11.h,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(isLargeScreen ? 22 : 16.r),
+            borderSide: BorderSide(
+              color: theme.colorScheme.outline.withOpacity(
+                isDark ? 0.20 : 0.34,
+              ),
+            ),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(isLargeScreen ? 22 : 16.r),
+            borderSide: BorderSide(
+              color: theme.colorScheme.outline.withOpacity(
+                isDark ? 0.20 : 0.34,
+              ),
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(isLargeScreen ? 22 : 16.r),
+            borderSide: BorderSide(
+              color: theme.colorScheme.primary.withOpacity(0.70),
+              width: 1.1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title, required this.icon});
+
+  final String title;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Container(
+            width: isLargeScreen ? 34 : 30.w,
+            height: isLargeScreen ? 34 : 30.w,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.09),
+              borderRadius: BorderRadius.circular(isLargeScreen ? 12 : 10.r),
+            ),
+            child: Icon(
+              icon,
+              color: theme.colorScheme.primary,
+              size: isLargeScreen ? 18 : 16.sp,
+            ),
+          ),
+          SizedBox(width: isLargeScreen ? 8 : 7.w),
+          Expanded(
+            child: Text(
+              title,
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              locale: const Locale('ar'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.body(context).copyWith(
+                fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HadithResultsLayout extends StatelessWidget {
+  const _HadithResultsLayout({
+    required this.hadiths,
+    required this.onAddToCards,
+  });
+
+  final List<HadithApiHadithModel> hadiths;
+  final Future<void> Function(HadithApiHadithModel hadith) onAddToCards;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    if (!isLargeScreen) {
+      return Column(
+        children: [
+          for (int i = 0; i < hadiths.length; i++) ...[
+            _ApiHadithCard(
+              hadith: hadiths[i],
+              onAddToCards: () => onAddToCards(hadiths[i]),
+            ),
+            if (i != hadiths.length - 1) SizedBox(height: 10.h),
+          ],
+        ],
+      );
+    }
+
+    final List<HadithApiHadithModel> rightColumn = <HadithApiHadithModel>[];
+    final List<HadithApiHadithModel> leftColumn = <HadithApiHadithModel>[];
+
+    for (int i = 0; i < hadiths.length; i++) {
+      if (i.isEven) {
+        rightColumn.add(hadiths[i]);
+      } else {
+        leftColumn.add(hadiths[i]);
+      }
+    }
+
+    return Row(
+      textDirection: TextDirection.rtl,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            children: [
+              for (int i = 0; i < rightColumn.length; i++) ...[
+                _ApiHadithCard(
+                  hadith: rightColumn[i],
+                  onAddToCards: () => onAddToCards(rightColumn[i]),
+                ),
+                if (i != rightColumn.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            children: [
+              for (int i = 0; i < leftColumn.length; i++) ...[
+                _ApiHadithCard(
+                  hadith: leftColumn[i],
+                  onAddToCards: () => onAddToCards(leftColumn[i]),
+                ),
+                if (i != leftColumn.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ApiHadithCard extends StatelessWidget {
+  const _ApiHadithCard({required this.hadith, required this.onAddToCards});
+
+  final HadithApiHadithModel hadith;
+  final VoidCallback onAddToCards;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    final double radius = isLargeScreen ? 22 : 18.r;
+    final double padding = isLargeScreen ? 16 : 13.w;
+    final double iconBox = isLargeScreen ? 38 : 34.w;
+    final double metaFontSize = isLargeScreen ? 11 : 9.5.sp;
+    final double bodyFontSize = isLargeScreen ? 14 : 12.sp;
+
+    final String metaText = [
+      if (hadith.bookName != null && hadith.bookName!.trim().isNotEmpty)
+        hadith.bookName!,
+      if (hadith.status != null && hadith.status!.trim().isNotEmpty)
+        hadith.status!,
+    ].join(' • ');
+
+    final String detailsText = [
+      if (hadith.chapter != null && hadith.chapter!.trim().isNotEmpty)
+        hadith.chapter!,
+      if (hadith.hadithNumber != null && hadith.hadithNumber!.trim().isNotEmpty)
+        'رقم الحديث: ${hadith.hadithNumber}',
+    ].join(' • ');
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(padding),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.secondary,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(isDark ? 0.18 : 0.30),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(isDark ? 0.10 : 0.025),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Stack(
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Container(
+                    width: iconBox,
+                    height: iconBox,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(0.09),
+                      borderRadius: BorderRadius.circular(
+                        isLargeScreen ? 13 : 12.r,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.verified_rounded,
+                      color: theme.colorScheme.primary,
+                      size: isLargeScreen ? 18 : 16.sp,
+                    ),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: EdgeInsets.only(right: isLargeScreen ? 48 : 44.w),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (metaText.isNotEmpty)
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              metaText,
+                              textAlign: TextAlign.right,
+                              textDirection: TextDirection.rtl,
+                              locale: const Locale('ar'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'cairo',
+                                fontSize: metaFontSize,
+                                fontWeight: FontWeight.w800,
+                                color: theme.colorScheme.primary,
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                        if (detailsText.isNotEmpty) ...[
+                          SizedBox(height: isLargeScreen ? 3 : 2.h),
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              detailsText,
+                              textAlign: TextAlign.right,
+                              textDirection: TextDirection.rtl,
+                              locale: const Locale('ar'),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTextStyles.caption(context).copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.surface.withOpacity(
+                                  0.55,
+                                ),
+                                height: 1.45,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: isLargeScreen ? 10 : 8.h),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(isLargeScreen ? 13 : 11.w),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(
+                  isDark ? 0.13 : 0.055,
+                ),
+                borderRadius: BorderRadius.circular(isLargeScreen ? 16 : 15.r),
+                border: Border.all(
+                  color: theme.colorScheme.primary.withOpacity(
+                    isDark ? 0.16 : 0.08,
+                  ),
+                ),
+              ),
+              child: Text(
+                hadith.textArabic,
+                textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
+                locale: const Locale('ar'),
+                style: TextStyle(
+                  fontFamily: 'cairo',
+                  fontSize: bodyFontSize,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.surface,
+                  height: 1.8,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+            SizedBox(height: isLargeScreen ? 11 : 10.h),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: onAddToCards,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: theme.colorScheme.primary,
+                  side: BorderSide(
+                    color: theme.colorScheme.primary.withOpacity(0.38),
+                  ),
+                  padding: EdgeInsets.symmetric(
+                    vertical: isLargeScreen ? 11 : 9.h,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(
+                      isLargeScreen ? 15 : 14.r,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Icon(Icons.add_rounded, size: isLargeScreen ? 18 : 17.sp),
+                    SizedBox(width: isLargeScreen ? 6 : 5.w),
+                    Text(
+                      'إضافة للكروت',
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.rtl,
+                      style: AppTextStyles.caption(
+                        context,
+                      ).copyWith(fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorCard extends StatelessWidget {
+  const _ErrorCard({
+    required this.message,
+    required this.details,
+    required this.onRetry,
+  });
+
+  final String message;
+  final String details;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(isLargeScreen ? 16 : 14.w),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.secondary,
+          borderRadius: BorderRadius.circular(isLargeScreen ? 22 : 18.r),
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(0.30),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              message,
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.caption(context).copyWith(
+                fontWeight: FontWeight.w800,
+                color: theme.colorScheme.surface,
+              ),
+            ),
+            SizedBox(height: isLargeScreen ? 7 : 6.h),
+            Text(
+              details,
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.ltr,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption(context).copyWith(
+                fontWeight: FontWeight.w500,
+                color: theme.colorScheme.surface.withOpacity(0.50),
+              ),
+            ),
+            SizedBox(height: isLargeScreen ? 11 : 10.h),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ElevatedButton(
+                onPressed: onRetry,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    const Icon(Icons.refresh_rounded),
+                    SizedBox(width: isLargeScreen ? 7 : 6.w),
+                    const Text('إعادة المحاولة'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyResultsCard extends StatelessWidget {
+  const _EmptyResultsCard({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isLargeScreen = _hadithLibraryLargeScreen(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isLargeScreen ? 16 : 14.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(isLargeScreen ? 22 : 18.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.30)),
+      ),
+      child: Text(
+        text,
+        textAlign: TextAlign.right,
+        textDirection: TextDirection.rtl,
+        style: AppTextStyles.caption(context).copyWith(
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.surface.withOpacity(0.64),
+        ),
+      ),
+    );
+  }
+}

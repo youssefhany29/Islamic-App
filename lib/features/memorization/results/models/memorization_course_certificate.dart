@@ -1,0 +1,34 @@
+class MemorizationCourseCertificate {
+  const MemorizationCourseCertificate({
+    required this.userName,
+    required this.planName,
+    required this.scopeTitle,
+    required this.startedAt,
+    required this.completedAt,
+    required this.commitmentPercent,
+    required this.memorizationPercent,
+    required this.testsAveragePercent,
+    this.testsEnabled = true,
+    required this.reviewPercent,
+    required this.improvedWeakSpotsPercent,
+    required this.completedDays,
+    required this.finalScore,
+  });
+
+  final String userName;
+  final String planName;
+  final String scopeTitle;
+  final DateTime startedAt;
+  final DateTime completedAt;
+  final int commitmentPercent;
+  final int memorizationPercent;
+  final int testsAveragePercent;
+  final bool testsEnabled;
+  final int reviewPercent;
+  final int improvedWeakSpotsPercent;
+  final int completedDays;
+  final int finalScore;
+
+  static const String disclaimer =
+      'هذه الشهادة للتشجيع والمتابعة داخل التطبيق وليست اعتمادًا رسميًا.';
+}

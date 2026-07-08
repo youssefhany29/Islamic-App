@@ -1,0 +1,1330 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/features/quran/phone/pages/phone_quran_page_content.dart';
+import 'package:islamic_app/features/quran/phone/daily_ayah/phone_quran_daily_ayah_card.dart';
+import 'package:islamic_app/features/quran/phone/tools/phone_quran_tools_section.dart';
+import 'package:islamic_app/features/quran/reader/quran_page_mapper.dart';
+import 'package:islamic_app/shared/widgets/app_main_components/custom_app_bar.dart';
+import 'package:islamic_app/features/quran/phone/reading_summary/phone_quran_reading_summary_info.dart';
+import 'package:islamic_app/features/quran/phone/reading_summary/phone_quran_reading_summary_section.dart';
+import 'package:islamic_app/features/quran/phone/widgets/phone_quran_hero_card.dart';
+import 'package:islamic_app/features/quran/phone/widgets/phone_quran_quick_access_strip.dart';
+import 'package:provider/provider.dart';
+import 'package:islamic_app/core/theme/theme_provider.dart';
+import 'package:islamic_app/features/quran/main_quraan_components/to_arabic_no_converter.dart';
+import 'package:islamic_app/features/quran/reader/qpc_connected_mushaf_page.dart';
+import 'package:islamic_app/features/quran/reader/qpc_ayah_search_page.dart';
+import 'package:islamic_app/features/quran/reader/models/qpc_models.dart';
+import 'package:islamic_app/features/quran/reader/theme/quran_reader_theme_controller.dart';
+import 'package:islamic_app/features/quran/reader/data/qpc_mushaf_repository.dart';
+import 'package:islamic_app/features/quran/reader/quran_reader_helpers.dart';
+import 'package:islamic_app/features/quran/reader/quran_reader_storage.dart';
+import 'package:islamic_app/features/quran/stats/quran_reading_stats_storage.dart';
+import 'package:islamic_app/features/quran/wird/create_khatma_page.dart';
+import 'package:islamic_app/features/quran/wird/daily_wird_page.dart';
+import 'package:islamic_app/features/quran/wird/quran_wird_storage.dart';
+import 'package:islamic_app/core/adaptive/adaptive_side_navigation.dart';
+import 'package:islamic_app/core/adaptive/adaptive_large_screen_shell.dart';
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+import 'package:islamic_app/features/home/presentation/adaptive/home_large_screen_navigation.dart';
+import 'package:islamic_app/features/settings/app_settings_drawer.dart';
+import 'package:islamic_app/shared/widgets/common_components/app_layout_constants.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+import '../home/presentation/phone/widgets/phone_home_bottom_navigation.dart';
+import '../home/presentation/phone/widgets/phone_tab_scaffold.dart';
+import 'main_quraan_components/index.dart';
+import 'main_quraan_components/quran_bookmarks_page.dart';
+import 'main_quraan_components/quran_parts_page.dart';
+
+class QuranPage extends StatefulWidget {
+  const QuranPage({super.key});
+
+  @override
+  State<QuranPage> createState() => _QuranPageState();
+}
+
+class _QuranPageState extends State<QuranPage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  late Future<_QuranHomeInfo> homeInfoFuture;
+  late Future<QuranPhoneHeroInfo> heroInfoFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    homeInfoFuture = _recordQuranEntryAndLoad();
+    heroInfoFuture = _buildHeroInfoFuture(homeInfoFuture);
+
+    // جهّز آخر موضع قراءة في الخلفية بمجرد دخول صفحة القرآن،
+    // عشان القارئ يفتح فورًا تقريبًا بدل شاشة تحميل كل مرة.
+    unawaited(_warmUpMushafReader());
+  }
+
+  Future<_QuranHomeInfo> _recordQuranEntryAndLoad() async {
+    await QuranReadingStatsStorage.recordQuranActivity();
+    return _loadHomeInfo();
+  }
+
+  Future<QuranPhoneHeroInfo> _buildHeroInfoFuture(
+    Future<_QuranHomeInfo> source,
+  ) async {
+    final info = await source;
+
+    return QuranPhoneHeroInfo(readPages: info.summary.completedPages);
+  }
+
+  void _refreshHomeInfo() {
+    final nextHomeInfoFuture = _loadHomeInfo();
+
+    setState(() {
+      homeInfoFuture = nextHomeInfoFuture;
+      heroInfoFuture = _buildHeroInfoFuture(nextHomeInfoFuture);
+    });
+  }
+
+  Future<void> _warmUpMushafReader({int? preferredPage}) async {
+    final QuranLastRead? mushafProgress =
+        await QuranReaderStorage.getMushafOpenProgress();
+
+    final int pageNumber =
+        (preferredPage ?? mushafProgress?.mushafPageNumber ?? 1)
+            .clamp(1, 604)
+            .toInt();
+
+    await QpcMushafRepository.instance.initialize();
+
+    // حمّل الصفحة الحالية فقط قبل فتح القارئ، والباقي يتجهز في الخلفية.
+    await QpcMushafRepository.instance.loadPage(pageNumber);
+    unawaited(
+      QpcMushafRepository.instance.warmUpPagesAround(pageNumber, radius: 2),
+    );
+  }
+
+  Future<void> _resetReadPages(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    await QuranReadingStatsStorage.resetReadPages();
+
+    if (!mounted) return;
+
+    _refreshHomeInfo();
+    _showQuranSnackBar(context: context, message: 'تم تصفير الصفحات المقروءة');
+  }
+
+  Future<void> _openPageWithoutAnimation(
+    BuildContext context,
+    Widget page,
+  ) async {
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => page,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    if (!mounted) return;
+    _refreshHomeInfo();
+  }
+
+  Future<void> _openQuranFromStart(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    final mushafProgress = await QuranReaderStorage.getMushafOpenProgress();
+
+    await _warmUpMushafReader(
+      preferredPage: mushafProgress?.mushafPageNumber ?? 1,
+    );
+
+    if (!context.mounted) return;
+
+    await _openPageWithoutAnimation(
+      context,
+      QpcConnectedMushafPage(
+        initialPage: mushafProgress?.mushafPageNumber ?? 1,
+        initialGlobalAyahIndex: mushafProgress == null
+            ? null
+            : QuranReaderHelpers.getGlobalAyahIndex(
+                suraIndex: mushafProgress.suraIndex,
+                ayahIndex: mushafProgress.ayahIndex,
+              ),
+        saveAsLastRead: false,
+        saveAsMushafOpenProgress: true,
+      ),
+    );
+  }
+
+  Future<void> _openLastRead(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    final lastRead = await QuranReaderStorage.getLastRead();
+
+    if (!context.mounted) return;
+
+    if (lastRead == null) {
+      _showQuranSnackBar(
+        context: context,
+        message: 'لا يوجد آخر موضع قراءة محفوظ حتى الآن',
+      );
+      return;
+    }
+
+    await _warmUpMushafReader(preferredPage: lastRead.mushafPageNumber);
+
+    if (!context.mounted) return;
+
+    await _openPageWithoutAnimation(
+      context,
+      QpcConnectedMushafPage(
+        initialPage: lastRead.mushafPageNumber,
+        initialGlobalAyahIndex: QuranReaderHelpers.getGlobalAyahIndex(
+          suraIndex: lastRead.suraIndex,
+          ayahIndex: lastRead.ayahIndex,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openQuranSearch(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    final QuranReaderThemeController themeController =
+        QuranReaderThemeController.instance;
+    await themeController.init();
+
+    if (!context.mounted) return;
+
+    final QpcAyahKey? target = await Navigator.of(context).push<QpcAyahKey>(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return QpcAyahSearchPage(readerTheme: themeController.theme);
+        },
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    if (target == null || !context.mounted) {
+      return;
+    }
+
+    await QuranPageMapper.load();
+
+    final int globalAyahIndex = QuranReaderHelpers.getGlobalAyahIndex(
+      suraIndex: (target.surah - 1).clamp(0, 113).toInt(),
+      ayahIndex: target.ayah - 1,
+    );
+
+    final int pageNumber = QuranPageMapper.getPageNumberForGlobalAyah(
+      globalAyahIndex,
+    );
+
+    await _warmUpMushafReader(preferredPage: pageNumber);
+
+    if (!context.mounted) return;
+
+    await _openPageWithoutAnimation(
+      context,
+      QpcConnectedMushafPage(
+        initialPage: pageNumber,
+        initialGlobalAyahIndex: globalAyahIndex,
+        saveAsLastRead: true,
+        saveAsMushafOpenProgress: true,
+      ),
+    );
+  }
+
+  Future<void> _openCreateKhatmaPage(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CreateKhatmaPage()),
+    );
+
+    if (!mounted) return;
+
+    _refreshHomeInfo();
+  }
+
+  Future<void> _openDailyWirdPage(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const DailyWirdPage()),
+    );
+
+    if (!mounted) return;
+
+    _refreshHomeInfo();
+  }
+
+  void _showQuranSnackBar({
+    required BuildContext context,
+    required String message,
+  }) {
+    final theme = Theme.of(context);
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: theme.colorScheme.primary,
+        elevation: 0,
+        margin: EdgeInsets.only(left: 24.w, right: 24.w, bottom: 18.h),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        content: Text(
+          message,
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: AppTextStyles.caption(context).copyWith(color: Colors.white),
+        ),
+        duration: const Duration(milliseconds: 1200),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final bool isLargeScreen = width >= 600;
+
+    final Widget content = isLargeScreen
+        ? _buildLargeScreenContent(context)
+        : _buildPhoneContent(context);
+
+    if (!isLargeScreen) {
+      return PhoneTabScaffold(
+        currentTab: PhoneHomeTab.quran,
+        backgroundColor: theme.colorScheme.background,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              CustomAppBar(
+                category: const CustomAppBarCategory(text: 'القرآن'),
+                subtitle: 'رفيقك اليومي للتلاوة والحفظ',
+                showBackButton: false,
+                reserveLeadingSpace: true,
+                trailing: _QuranAppBarSearchButton(
+                  onTap: () => _openQuranSearch(context),
+                ),
+              ),
+              SizedBox(height: 10.h),
+              Expanded(child: content),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: adaptiveSidePanelColor(context),
+      endDrawer: AppSettingsDrawer(),
+      body: SafeArea(
+        child: AdaptiveLargeScreenShell(
+          navigationItems: homeLargeScreenNavigationItems(
+            context,
+            onHomeTap: () =>
+                Navigator.of(context).popUntil((route) => route.isFirst),
+            onSettingsTap: () => _scaffoldKey.currentState?.openEndDrawer(),
+          ),
+          selectedNavigationId: 'quran',
+          userName: 'المسلم',
+          greetingMessage: 'رفيقك في كل حين',
+          quickItems: _largeScreenQuickItems(context),
+          body: content,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPhoneContent(BuildContext context) {
+    return PhoneQuranPageContent(
+      heroCard: _buildStartReadingCard(context),
+      quickAccessCard: _buildQuickAccessStrip(context),
+      readingSummaryCard: _buildReadingSummaryCard(context),
+      toolsCard: _buildQuranToolsCard(context),
+      dailyAyahCard: _buildDailyAyahCard(context),
+    );
+  }
+
+  Widget _buildLargeScreenContent(BuildContext context) {
+    final Size size = MediaQuery.sizeOf(context);
+    final bool landscape = size.width > size.height;
+    final bool isRealTablet = size.shortestSide >= 600;
+    final double gap = 16;
+    final double panelPadding = isRealTablet ? 22 : 14;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Padding(
+        padding: EdgeInsets.all(panelPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const _LargePageTitle(title: 'القرآن', centered: true),
+            SizedBox(height: gap),
+            if (landscape)
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Expanded(child: _buildReadingSummaryCard(context)),
+                    SizedBox(width: gap),
+                    Expanded(child: _buildStartReadingCard(context)),
+                  ],
+                ),
+              )
+            else ...[
+              _buildStartReadingCard(context),
+              SizedBox(height: gap),
+              _buildReadingSummaryCard(context),
+            ],
+            SizedBox(height: gap),
+            _buildQuranToolsCard(context),
+            SizedBox(height: gap),
+            _buildDailyAyahCard(context),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStartReadingCard(BuildContext context) {
+    return PhoneQuranHeroCard(
+      heroInfoFuture: heroInfoFuture,
+      onOpenMushaf: () => _openQuranFromStart(context),
+      onOpenLastRead: () => _openLastRead(context),
+    );
+  }
+
+  Widget _buildQuickAccessStrip(BuildContext context) {
+    return PhoneQuranQuickAccessStrip(
+      infoFuture: _buildQuickAccessInfo(),
+      onOpenWird: () => _openDailyWirdPage(context),
+      onOpenLastRead: () => _openLastRead(context),
+    );
+  }
+
+  Future<PhoneQuranQuickAccessInfo> _buildQuickAccessInfo() async {
+    final activeWirds = await QuranWirdStorage.buildTodayWirds();
+    final lastRead = await QuranReaderStorage.getLastRead();
+
+    String wirdSubtitle = 'لا يوجد ورد محدد اليوم';
+
+    if (activeWirds.isNotEmpty) {
+      final wird = activeWirds.first;
+
+      wirdSubtitle = _formatQuickAccessRange(
+        fromSuraName: QuranWirdStorage.getSuraName(wird.fromSuraIndex),
+        fromAyah: wird.fromAyahIndex + 1,
+        toSuraName: QuranWirdStorage.getSuraName(wird.toSuraIndex),
+        toAyah: wird.toAyahIndex + 1,
+      );
+    }
+
+    String lastReadSubtitle = 'لا توجد قراءة محفوظة';
+
+    if (lastRead != null) {
+      lastReadSubtitle = _formatQuickAccessPoint(
+        suraName: QuranWirdStorage.getSuraName(lastRead.suraIndex),
+        ayah: lastRead.ayahIndex + 1,
+      );
+    }
+
+    return PhoneQuranQuickAccessInfo(
+      wirdSubtitle: wirdSubtitle,
+      lastReadSubtitle: lastReadSubtitle,
+    );
+  }
+
+  String _formatQuickAccessRange({
+    required String fromSuraName,
+    required int fromAyah,
+    required String toSuraName,
+    required int toAyah,
+  }) {
+    return 'من ${_formatQuickAccessPoint(suraName: fromSuraName, ayah: fromAyah)} '
+        'ل ${_formatQuickAccessPoint(suraName: toSuraName, ayah: toAyah)}';
+  }
+
+  String _formatQuickAccessPoint({
+    required String suraName,
+    required int ayah,
+  }) {
+    return '$suraName - ${_ltrNumber(ayah)}';
+  }
+
+  String _ltrNumber(Object value) {
+    return '\u2066${value.toString()}\u2069';
+  }
+
+  Widget _buildReadingSummaryCard(BuildContext context) {
+    return FutureBuilder<_QuranHomeInfo>(
+      future: homeInfoFuture,
+      builder: (context, snapshot) {
+        final summary = snapshot.data?.summary ?? _QuranHomeSummary.empty();
+
+        return PhoneQuranReadingSummarySection(
+          info: PhoneQuranReadingSummaryInfo(
+            readPages: summary.completedPages,
+            completedWirds: summary.completedWirds,
+            currentStreakDays: summary.currentStreakDays,
+            activeKhatmas: summary.activePlansCount,
+            nearestKhatmaProgressPercent: summary.currentPlanProgressPercent,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildQuranToolsCard(BuildContext context) {
+    return PhoneQuranToolsSection(
+      onOpenBookmarks: () async {
+        await _openPageWithoutAnimation(context, const QuranBookmarksPage());
+      },
+      onOpenParts: () async {
+        await QuranReadingStatsStorage.recordQuranActivity();
+        if (!context.mounted) return;
+        await _openPageWithoutAnimation(context, const QuranPartsPage());
+      },
+      onOpenIndex: () async {
+        await QuranReadingStatsStorage.recordQuranActivity();
+        if (!context.mounted) return;
+        await _openPageWithoutAnimation(context, const IndexPage());
+      },
+      onOpenKhatmas: () => _openDailyWirdPage(context),
+    );
+  }
+
+  Widget _buildDailyAyahCard(BuildContext context) {
+    return const PhoneQuranDailyAyahCard();
+  }
+
+  _QuranHomeColors _quranHomeColors(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    return _QuranHomeColors(
+      buttonColor: isDark ? const Color(0xff0E1320) : const Color(0xff111827),
+      buttonBorderColor: isDark
+          ? Colors.white.withOpacity(0.08)
+          : Colors.white.withOpacity(0.07),
+      outerCardColor: theme.colorScheme.primary,
+      outerCardBorderColor: theme.colorScheme.primary.withOpacity(0.95),
+    );
+  }
+
+  List<AdaptiveNavItem> _largeScreenNavigationItems(BuildContext context) {
+    return [
+      AdaptiveNavItem(
+        id: 'quran',
+        label: 'القرآن',
+        icon: Icons.menu_book_outlined,
+        onTap: () {},
+      ),
+      AdaptiveNavItem(
+        id: 'daily_wird',
+        label: 'ورد اليوم',
+        icon: Icons.check_circle_outline_rounded,
+        onTap: () => _openDailyWirdPage(context),
+      ),
+      AdaptiveNavItem(
+        id: 'create_khatma',
+        label: 'إنشاء ختمة',
+        icon: Icons.auto_stories_outlined,
+        onTap: () => _openCreateKhatmaPage(context),
+      ),
+      AdaptiveNavItem(
+        id: 'bookmarks',
+        label: 'العلامات',
+        icon: Icons.bookmark_border_rounded,
+        onTap: () =>
+            _openPageWithoutAnimation(context, const QuranBookmarksPage()),
+      ),
+      AdaptiveNavItem(
+        id: 'parts',
+        label: 'الأجزاء',
+        icon: Icons.view_list_rounded,
+        onTap: () => _openPageWithoutAnimation(context, const QuranPartsPage()),
+      ),
+      AdaptiveNavItem(
+        id: 'index',
+        label: 'الفهرس',
+        icon: Icons.format_list_bulleted_rounded,
+        onTap: () => _openPageWithoutAnimation(context, const IndexPage()),
+      ),
+    ];
+  }
+
+  List<AdaptiveSideQuickItem> _largeScreenQuickItems(BuildContext context) {
+    return [
+      AdaptiveSideQuickItem(
+        label: 'فتح المصحف',
+        icon: Icons.menu_book_rounded,
+        onTap: () => _openQuranFromStart(context),
+      ),
+      AdaptiveSideQuickItem(
+        label: 'آخر قراءة',
+        icon: Icons.history_rounded,
+        onTap: () => _openLastRead(context),
+      ),
+    ];
+  }
+}
+
+class _QuranAppBarSearchButton extends StatelessWidget {
+  const _QuranAppBarSearchButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14.r),
+        onTap: onTap,
+        child: Container(
+          width: 38.w,
+          height: 38.w,
+          decoration: BoxDecoration(
+            color: isDark
+                ? colors.secondary.withOpacity(0.92)
+                : colors.primary.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(14.r),
+          ),
+          child: Icon(Icons.search_rounded, size: 18.sp, color: colors.primary),
+        ),
+      ),
+    );
+  }
+}
+
+class _MainPageTypographySizes {
+  const _MainPageTypographySizes._();
+
+  static bool isFoldLandscape(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return size.width >= 600 && size.shortestSide < 600;
+  }
+
+  static bool isLarge(BuildContext context) {
+    return MediaQuery.sizeOf(context).width >= 600;
+  }
+
+  // Same values used by MainPage/tablet_dashboard/tablet_dashboard_card_base.dart
+  static double cardTitle(BuildContext context) {
+    if (!isLarge(context)) return 13.sp;
+    return isFoldLandscape(context) ? 18 : 23;
+  }
+
+  static double cardSubtitle(BuildContext context) {
+    if (!isLarge(context)) return 8.5.sp;
+    return isFoldLandscape(context) ? 12 : 15;
+  }
+
+  // Same values used by MainPage/Components Main Page/Main App Widget/icons_main_widget.dart
+  static TextStyle? actionLabel(BuildContext context) {
+    final base = Theme.of(context).textTheme.labelLarge;
+    if (!isLarge(context)) {
+      return base?.copyWith(fontSize: 11.sp);
+    }
+    return base?.copyWith(
+      fontSize: isFoldLandscape(context) ? 10.5 : 12,
+      height: 1.15,
+    );
+  }
+}
+
+class _QuranPhoneHeader extends StatelessWidget {
+  const _QuranPhoneHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+
+    return Padding(
+      padding: EdgeInsets.only(right: 0.w, left: 0.w, top: 14.h),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: BoxConstraints(minWidth: 44.w, minHeight: 44.h),
+            onPressed: () {
+              Provider.of<ThemeProvider>(context, listen: false).toggleTheme();
+            },
+            icon: Image.asset(
+              themeProvider.themeData.brightness == Brightness.dark
+                  ? 'assets/icons/sun.png'
+                  : 'assets/icons/moon.png',
+              width: 22.w,
+              height: 22.h,
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'القرآن',
+                textAlign: TextAlign.center,
+                textDirection: TextDirection.rtl,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.body(
+                  context,
+                ).copyWith(fontWeight: FontWeight.w800),
+              ),
+              SizedBox(height: 1.h),
+              Text(
+                'اقرأ وتابع وردك اليومي',
+                textAlign: TextAlign.center,
+                textDirection: TextDirection.rtl,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.caption(context).copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surface.withOpacity(0.58),
+                ),
+              ),
+            ],
+          ),
+          Builder(
+            builder: (drawerContext) {
+              return IconButton(
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(minWidth: 44.w, minHeight: 44.h),
+                onPressed: () {
+                  Scaffold.of(drawerContext).openEndDrawer();
+                },
+                icon: Image.asset(
+                  themeProvider.themeData.brightness == Brightness.dark
+                      ? 'assets/icons/menuWhite.png'
+                      : 'assets/icons/menu (1).png',
+                  width: 22.w,
+                  height: 22.h,
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LargePageTitle extends StatelessWidget {
+  const _LargePageTitle({required this.title, this.centered = false});
+
+  final String title;
+  final bool centered;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: double.infinity,
+      child: Text(
+        title,
+        textDirection: TextDirection.rtl,
+        textAlign: centered ? TextAlign.center : TextAlign.right,
+        style: AppTextStyles.display(context).copyWith(
+          fontWeight: FontWeight.w900,
+          color: theme.colorScheme.onBackground,
+          height: 1.15,
+        ),
+      ),
+    );
+  }
+}
+
+class _QuranHomeColors {
+  const _QuranHomeColors({
+    required this.buttonColor,
+    required this.buttonBorderColor,
+    required this.outerCardColor,
+    required this.outerCardBorderColor,
+  });
+
+  final Color buttonColor;
+  final Color buttonBorderColor;
+  final Color outerCardColor;
+  final Color outerCardBorderColor;
+}
+
+class _MainQuranCard extends StatelessWidget {
+  final Color color;
+  final Color borderColor;
+  final Widget child;
+
+  const _MainQuranCard({
+    required this.color,
+    required this.borderColor,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isLargeScreen = MediaQuery.sizeOf(context).width >= 600;
+
+    return SizedBox(
+      width: isLargeScreen ? double.infinity : AppLayoutConstants.mainCardWidth,
+      child: Container(
+        padding: isLargeScreen
+            ? const EdgeInsets.all(16)
+            : EdgeInsets.all(AppLayoutConstants.mainCardPadding),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(
+            AppLayoutConstants.mainCardRadius,
+          ),
+          border: Border.all(color: borderColor, width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.12),
+              blurRadius: 16,
+              offset: Offset(0, 8.h),
+            ),
+          ],
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _CardTitle extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+
+  const _CardTitle({required this.title, this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            title,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.body(context).copyWith(
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              height: 1.1,
+            ),
+          ),
+        ),
+        if (subtitle != null) ...[
+          SizedBox(height: 4.h),
+          SizedBox(
+            width: double.infinity,
+            child: Text(
+              subtitle!,
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: Colors.white.withOpacity(
+                  MediaQuery.sizeOf(context).width >= 600 ? 0.82 : 0.62,
+                ),
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _QuickActionButton extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color borderColor;
+  final Color textColor;
+  final VoidCallback onTap;
+
+  const _QuickActionButton({
+    required this.title,
+    required this.icon,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.textColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isLargeScreen = MediaQuery.sizeOf(context).width >= 600;
+
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(14.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14.r),
+        onTap: onTap,
+        child: Container(
+          height: isLargeScreen ? 68 : 58.h,
+          padding: EdgeInsets.symmetric(horizontal: isLargeScreen ? 12 : 10.w),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14.r),
+            border: Border.all(color: borderColor, width: 1),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: isLargeScreen ? 22 : 19.sp, color: textColor),
+              SizedBox(height: 6.h),
+              Text(
+                title,
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'cairo',
+                  fontSize: isLargeScreen ? 12 : 10.sp,
+                  fontWeight: FontWeight.w700,
+                  color: textColor,
+                  height: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SmallInfoButton extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Color backgroundColor;
+  final Color borderColor;
+  final Color textColor;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _SmallInfoButton({
+    required this.title,
+    required this.subtitle,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.textColor,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isLargeScreen = MediaQuery.sizeOf(context).width >= 600;
+
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(14.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14.r),
+        onTap: () {
+          AppHaptics.tap(context);
+          onTap();
+        },
+        child: Container(
+          constraints: BoxConstraints(minHeight: isLargeScreen ? 60 : 68.h),
+          padding: EdgeInsets.symmetric(
+            horizontal: isLargeScreen ? 14 : 10.w,
+            vertical: isLargeScreen ? 8 : 9.h,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14.r),
+            border: Border.all(color: borderColor, width: 1),
+          ),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(icon, size: isLargeScreen ? 20 : 17.sp, color: textColor),
+              SizedBox(width: isLargeScreen ? 10 : 8.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'cairo',
+                        fontSize: MediaQuery.sizeOf(context).width >= 600
+                            ? _MainPageTypographySizes.actionLabel(
+                                context,
+                              )?.fontSize
+                            : 10.2.sp,
+                        fontWeight: FontWeight.w800,
+                        color: textColor,
+                        height: 1.15,
+                      ),
+                    ),
+                    SizedBox(height: 3.h),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'cairo',
+                        fontSize: MediaQuery.sizeOf(context).width >= 600
+                            ? _MainPageTypographySizes.cardSubtitle(context) *
+                                  0.75
+                            : 7.4.sp,
+                        color: textColor.withOpacity(0.60),
+                        height: 1.15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LargeButton extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color borderColor;
+  final Color textColor;
+  final VoidCallback onTap;
+
+  const _LargeButton({
+    required this.title,
+    required this.icon,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.textColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(14.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14.r),
+        onTap: () {
+          AppHaptics.tap(context);
+          onTap();
+        },
+        child: Container(
+          width: double.infinity,
+          height: MediaQuery.sizeOf(context).width >= 600 ? 42 : 40.h,
+          padding: EdgeInsets.symmetric(
+            horizontal: MediaQuery.sizeOf(context).width >= 600 ? 14 : 12.w,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14.r),
+            border: Border.all(color: borderColor, width: 1),
+          ),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                icon,
+                size: MediaQuery.sizeOf(context).width >= 600 ? 16 : 17.sp,
+                color: textColor,
+              ),
+              SizedBox(width: 9.w),
+              Expanded(
+                child: Text(
+                  title,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'cairo',
+                    fontSize: MediaQuery.sizeOf(context).width >= 600
+                        ? _MainPageTypographySizes.actionLabel(
+                            context,
+                          )?.fontSize
+                        : 11.sp,
+                    fontWeight: FontWeight.w700,
+                    color: textColor,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: MediaQuery.sizeOf(context).width >= 600 ? 10 : 11.sp,
+                color: textColor.withOpacity(0.75),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReadingStatBox extends StatelessWidget {
+  final String title;
+  final String value;
+  final Color backgroundColor;
+  final Color borderColor;
+
+  const _ReadingStatBox({
+    required this.title,
+    required this.value,
+    required this.backgroundColor,
+    required this.borderColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        minHeight: MediaQuery.sizeOf(context).width >= 600 ? 58 : 56.h,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: MediaQuery.sizeOf(context).width >= 600 ? 12 : 8.w,
+        vertical: MediaQuery.sizeOf(context).width >= 600 ? 7 : 7.h,
+      ),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(14.r),
+        border: Border.all(color: borderColor, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            value,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'cairo',
+              fontSize: MediaQuery.sizeOf(context).width >= 600 ? 14 : 12.sp,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              height: 1,
+            ),
+          ),
+          SizedBox(height: 5.h),
+          Text(
+            title,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'cairo',
+              fontSize: MediaQuery.sizeOf(context).width >= 600 ? 9.5 : 8.2.sp,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withOpacity(0.62),
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuranHomeInfo {
+  final bool hasActiveWirds;
+  final String title;
+  final String subtitle;
+  final _QuranHomeSummary summary;
+
+  const _QuranHomeInfo({
+    required this.hasActiveWirds,
+    required this.title,
+    required this.subtitle,
+    required this.summary,
+  });
+}
+
+class _QuranHomeSummary {
+  final int completedWirds;
+  final int completedPages;
+  final int completedKhatmas;
+  final int currentStreakDays;
+  final int activePlansCount;
+  final int currentPlanProgressPercent;
+  final String note;
+
+  const _QuranHomeSummary({
+    required this.completedWirds,
+    required this.completedPages,
+    required this.completedKhatmas,
+    required this.currentStreakDays,
+    required this.activePlansCount,
+    required this.currentPlanProgressPercent,
+    required this.note,
+  });
+
+  factory _QuranHomeSummary.empty() {
+    return const _QuranHomeSummary(
+      completedWirds: 0,
+      completedPages: 0,
+      completedKhatmas: 0,
+      currentStreakDays: 0,
+      activePlansCount: 0,
+      currentPlanProgressPercent: 0,
+      note: '',
+    );
+  }
+}
+
+Future<_QuranHomeInfo> _loadHomeInfo() async {
+  final activePlans = await QuranWirdStorage.getActivePlans();
+  final completedPlans = await QuranWirdStorage.getCompletedPlans();
+  final activeWirds = await QuranWirdStorage.buildTodayWirds();
+  final savedStats = await QuranReadingStatsStorage.getStats();
+
+  final summary = _buildHomeSummary(
+    activePlans: activePlans,
+    completedPlans: completedPlans,
+    savedStats: savedStats,
+  );
+
+  if (activeWirds.isEmpty) {
+    return _QuranHomeInfo(
+      hasActiveWirds: false,
+      title: '',
+      subtitle: '',
+      summary: summary,
+    );
+  }
+
+  final firstWird = activeWirds.first;
+
+  final fromSuraName = QuranWirdStorage.getSuraName(firstWird.fromSuraIndex);
+  final toSuraName = QuranWirdStorage.getSuraName(firstWird.toSuraIndex);
+
+  final fromAyah = (firstWird.fromAyahIndex + 1).toString().toArabicNumbers;
+  final toAyah = (firstWird.toAyahIndex + 1).toString().toArabicNumbers;
+
+  final fromPage = firstWird.fromPageNumber.toString().toArabicNumbers;
+  final toPage = firstWird.toPageNumber.toString().toArabicNumbers;
+
+  final activeCount = activeWirds.length.toString().toArabicNumbers;
+
+  final suraRange = fromSuraName == toSuraName
+      ? 'سورة $fromSuraName'
+      : 'من $fromSuraName إلى $toSuraName';
+
+  final title = activeWirds.length == 1
+      ? firstWird.planName
+      : '$activeCount أوراد حالية';
+
+  final subtitle = activeWirds.length == 1
+      ? '$suraRange | ص $fromPage إلى ص $toPage | آية $fromAyah إلى آية $toAyah'
+      : '${firstWird.planName}: $suraRange | ص $fromPage إلى ص $toPage';
+
+  return _QuranHomeInfo(
+    hasActiveWirds: true,
+    title: title,
+    subtitle: subtitle,
+    summary: summary,
+  );
+}
+
+_QuranHomeSummary _buildHomeSummary({
+  required List<QuranKhatmaPlan> activePlans,
+  required List<QuranKhatmaPlan> completedPlans,
+  required QuranReadingStats savedStats,
+}) {
+  int completedWirdsFromPlans = 0;
+  for (final plan in activePlans) {
+    final safeTotalDays = plan.totalDays <= 0 ? 30 : plan.totalDays;
+    final safeCompletedDays = plan.completedDays
+        .clamp(0, safeTotalDays)
+        .toInt();
+
+    completedWirdsFromPlans += safeCompletedDays;
+  }
+
+  for (final plan in completedPlans) {
+    final safeTotalDays = plan.totalDays <= 0 ? 30 : plan.totalDays;
+    final safeCompletedDays = plan.completedDays <= 0
+        ? safeTotalDays
+        : plan.completedDays.clamp(0, safeTotalDays).toInt();
+
+    completedWirdsFromPlans += safeCompletedDays;
+  }
+
+  final firstActivePlan = activePlans.isEmpty ? null : activePlans.first;
+
+  final int currentPlanProgressPercent;
+  if (firstActivePlan == null || firstActivePlan.totalDays <= 0) {
+    currentPlanProgressPercent = 0;
+  } else {
+    currentPlanProgressPercent =
+        ((firstActivePlan.completedDays / firstActivePlan.totalDays) * 100)
+            .clamp(0, 100)
+            .toDouble()
+            .round();
+  }
+
+  final completedWirds =
+      savedStats.totalCompletedWirds > completedWirdsFromPlans
+      ? savedStats.totalCompletedWirds
+      : completedWirdsFromPlans;
+
+  final completedPages = savedStats.totalReadPages;
+
+  final completedKhatmas =
+      savedStats.totalCompletedKhatmas > completedPlans.length
+      ? savedStats.totalCompletedKhatmas
+      : completedPlans.length;
+
+  final note = completedPages == 0
+      ? 'ابدأ القراءة من المصحف أو الفهرس أو الأجزاء وسيتم حساب صفحات المصحف التي تزورها هنا فقط.'
+      : '';
+
+  return _QuranHomeSummary(
+    completedWirds: completedWirds,
+    completedPages: completedPages,
+    completedKhatmas: completedKhatmas,
+    currentStreakDays: savedStats.currentStreakDays,
+    activePlansCount: activePlans.length,
+    currentPlanProgressPercent: currentPlanProgressPercent,
+    note: note,
+  );
+}

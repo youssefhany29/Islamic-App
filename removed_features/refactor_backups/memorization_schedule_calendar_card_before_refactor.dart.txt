@@ -1,0 +1,1402 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+
+import 'package:islamic_app/features/memorization/data/models/memorization_today_task_model.dart';
+import '../pages/memorization_training_session_page.dart';
+import 'package:islamic_app/features/memorization/test/pages/memorization_test_session_page.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_plan_journey_engine.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_plan_storage.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_rescue_review_engine.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_session_result_storage.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+class MemorizationScheduleCalendarCard extends StatefulWidget {
+  const MemorizationScheduleCalendarCard({super.key});
+
+  @override
+  State<MemorizationScheduleCalendarCard> createState() =>
+      _MemorizationScheduleCalendarCardState();
+}
+
+class _MemorizationScheduleCalendarCardState
+    extends State<MemorizationScheduleCalendarCard> {
+  Future<_ScheduleData>? scheduleFuture;
+  Timer? refreshTimer;
+  int selectedDayOffset = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshSchedule();
+    refreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+          (_) => _refreshSchedule(),
+    );
+  }
+
+  @override
+  void dispose() {
+    refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _refreshSchedule() {
+    if (!mounted) return;
+
+    // الكارت الصغير يعرض 7 أيام فقط، لذلك نطلب مدى قصير وخفيف.
+    final future = _loadSchedule(daysAhead: 7);
+
+    setState(() {
+      scheduleFuture = future;
+    });
+  }
+
+  int _monthCalendarHorizonDays(activePlan) {
+    if (activePlan == null) return 180;
+
+    final baseDays = activePlan.totalDays > 0 ? activePlan.totalDays : 180;
+    final buffer = (baseDays * 0.30).ceil().clamp(60, 360).toInt();
+
+    // يكفي للخطط الطويلة جدًا مثل 700 يوم، مع حد آمن حتى لا نثقل التطبيق.
+    return (baseDays + buffer).clamp(180, 1400).toInt();
+  }
+
+  Future<_ScheduleData> _loadSchedule({required int? daysAhead}) async {
+    final plans = await MemorizationPlanStorage.getPlans();
+    if (plans.isEmpty) {
+      return const _ScheduleData(plansCount: 0, items: []);
+    }
+
+    final activePlan = await MemorizationPlanStorage.getActivePlan();
+    final activeTask = await MemorizationPlanStorage.getTodayTask();
+    final results = await MemorizationSessionResultStorage.getResults();
+    final horizonDays = daysAhead ?? _monthCalendarHorizonDays(activePlan);
+
+    final journeyItems = await const MemorizationPlanJourneyEngine()
+        .buildJourneyTasks(
+      plan: activePlan,
+      activeTask: activeTask,
+      daysAhead: horizonDays,
+    );
+
+    final items = <_ScheduleItem>[
+      ...journeyItems.map(_ScheduleItem.fromJourney),
+    ];
+
+    final rescueTasks = const MemorizationRescueReviewEngine()
+        .getUpcomingRescueTasks(
+      results: results,
+      activePlan: activePlan,
+      daysAhead: horizonDays,
+    );
+
+    for (final task in rescueTasks) {
+      items.add(_ScheduleItem.fromTask(
+        task: task,
+        date: task.effectiveScheduledDate,
+        timeLabel: 'إنقاذ',
+        priority: 4,
+        isRescue: true,
+      ));
+    }
+
+    items.sort((a, b) {
+      final dateCompare = a.date.compareTo(b.date);
+      if (dateCompare != 0) return dateCompare;
+      return a.priority.compareTo(b.priority);
+    });
+
+    return _ScheduleData(plansCount: plans.length, items: items);
+  }
+
+  void _selectDay(int dayOffset) {
+    AppHaptics.tap(context);
+    setState(() => selectedDayOffset = dayOffset);
+  }
+
+  Future<void> _onTaskDisplayTap(_ScheduleItem item) async {
+    AppHaptics.tap(context);
+
+    if (!item.task.hasValidRange) return;
+
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => item.task.type == 'selfTest'
+            ? MemorizationTestSessionPage(task: item.task)
+            : MemorizationTrainingSessionPage(task: item.task),
+      ),
+    );
+
+    if (mounted) _refreshSchedule();
+  }
+
+  Future<void> _openMonthCalendarSheet() async {
+    AppHaptics.tap(context);
+
+    // التقويم الشهري يتحسب عند فتح الأيقونة فقط، وبمدى يغطي الخطة كاملة.
+    final data = await _loadSchedule(daysAhead: null);
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _MonthCalendarSheet(data: data),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_ScheduleData>(
+      future: scheduleFuture,
+      builder: (context, snapshot) {
+        final data = snapshot.data ?? const _ScheduleData(plansCount: 0, items: []);
+
+        return _ScheduleCalendarContent(
+          data: data,
+          selectedDayOffset: selectedDayOffset,
+          onDayTap: _selectDay,
+          onTaskTap: (item) => _onTaskDisplayTap(item),
+          onOpenMonthCalendar: _openMonthCalendarSheet,
+        );
+      },
+    );
+  }
+}
+
+class _ScheduleCalendarContent extends StatelessWidget {
+  const _ScheduleCalendarContent({
+    required this.data,
+    required this.selectedDayOffset,
+    required this.onDayTap,
+    required this.onTaskTap,
+    required this.onOpenMonthCalendar,
+  });
+
+  final _ScheduleData data;
+  final int selectedDayOffset;
+  final ValueChanged<int> onDayTap;
+  final ValueChanged<_ScheduleItem> onTaskTap;
+  final VoidCallback onOpenMonthCalendar;
+
+  List<_ScheduleDay> get _days {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    return List.generate(7, (index) {
+      final date = today.add(Duration(days: index));
+      final items = data.items.where((item) => _sameDay(item.date, date)).toList();
+      return _ScheduleDay(offset: index, date: date, items: items);
+    });
+  }
+
+  bool _sameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+
+
+  String _arabicDayName(DateTime date) {
+    const days = [
+      'الإثنين',
+      'الثلاثاء',
+      'الأربعاء',
+      'الخميس',
+      'الجمعة',
+      'السبت',
+      'الأحد',
+    ];
+    return days[date.weekday - 1];
+  }
+
+  String _dayLabel(DateTime date, int offset) {
+    if (offset == 0) return 'اليوم';
+    if (offset == 1) return 'غدًا';
+    return _arabicDayName(date);
+  }
+
+  String _selectedDayTitle(_ScheduleDay day) {
+    if (day.offset == 0) return 'مهام اليوم';
+    if (day.offset == 1) return 'مهام الغد';
+    return 'مهام ${_arabicDayName(day.date)}';
+  }
+
+  int get todayTasksCount {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return data.items.where((item) => _sameDay(item.date, today)).length;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final days = _days;
+    final selectedDay = days.firstWhere(
+          (day) => day.offset == selectedDayOffset,
+      orElse: () => days.first,
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(14.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(24.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14.r),
+                  onTap: onOpenMonthCalendar,
+                  child: Container(
+                    width: 38.w,
+                    height: 38.w,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(14.r),
+                    ),
+                    child: Icon(
+                      Icons.calendar_month_rounded,
+                      color: theme.colorScheme.primary,
+                      size: 21.sp,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: 10.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'تقويم الحفظ والمراجعة',
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                        color: theme.colorScheme.surface
+),
+                    ),
+                    SizedBox(height: 3.h),
+                    Text(
+                      data.plansCount == 0
+                          ? 'لا توجد خطة محفوظة الآن.'
+                          : todayTasksCount == 0
+                          ? 'اختار يومًا من التقويم لعرض مهامه هنا.'
+                          : 'اليوم لديك $todayTasksCount مهمة: حفظ، مراجعة، أو اختبار حسب نوع خطتك.',
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.surface.withOpacity(0.58),
+                        height: 1.4
+),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 12.h),
+          SizedBox(
+            height: 76.h,
+            child: ListView.separated(
+              reverse: true,
+              scrollDirection: Axis.horizontal,
+              itemCount: days.length,
+              separatorBuilder: (_, __) => SizedBox(width: 8.w),
+              itemBuilder: (context, index) {
+                final day = days[index];
+                return _DayChip(
+                  label: _dayLabel(day.date, day.offset),
+                  dayNumber: day.date.day,
+                  count: day.items.length,
+                  isToday: day.offset == 0,
+                  isSelected: day.offset == selectedDay.offset,
+                  onTap: () => onDayTap(day.offset),
+                );
+              },
+            ),
+          ),
+          SizedBox(height: 12.h),
+          _InlineDayTasksPanel(
+            title: _selectedDayTitle(selectedDay),
+            day: selectedDay,
+            plansCount: data.plansCount,
+            onTaskTap: onTaskTap,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DayChip extends StatelessWidget {
+  const _DayChip({
+    required this.label,
+    required this.dayNumber,
+    required this.count,
+    required this.isToday,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int dayNumber;
+  final int count;
+  final bool isToday;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final highlighted = isSelected || isToday;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18.r),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 170),
+          width: 64.w,
+          padding: EdgeInsets.symmetric(horizontal: 7.w, vertical: 8.h),
+          decoration: BoxDecoration(
+            color: highlighted
+                ? theme.colorScheme.primary.withOpacity(isSelected ? 0.16 : 0.10)
+                : theme.colorScheme.background.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(18.r),
+            border: Border.all(
+              color: isSelected
+                  ? theme.colorScheme.primary.withOpacity(0.52)
+                  : isToday
+                  ? theme.colorScheme.primary.withOpacity(0.30)
+                  : theme.colorScheme.outline.withOpacity(0.12),
+              width: isSelected ? 1.2 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                label,
+                textDirection: TextDirection.rtl,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface.withOpacity(0.72),
+                  height: 1
+),
+              ),
+              SizedBox(height: 5.h),
+              Text(
+                '$dayNumber',
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface,
+                  height: 1
+),
+              ),
+              SizedBox(height: 5.h),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 3.h),
+                decoration: BoxDecoration(
+                  color: count == 0
+                      ? theme.colorScheme.surface.withOpacity(0.05)
+                      : theme.colorScheme.primary.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(30.r),
+                ),
+                child: Text(
+                  count == 0 ? 'فارغ' : '$count مهمة',
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: count == 0
+                        ? theme.colorScheme.surface.withOpacity(0.42)
+                        : theme.colorScheme.primary,
+                    height: 1
+),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineDayTasksPanel extends StatelessWidget {
+  const _InlineDayTasksPanel({
+    required this.title,
+    required this.day,
+    required this.plansCount,
+    required this.onTaskTap,
+  });
+
+  final String title;
+  final _ScheduleDay day;
+  final int plansCount;
+  final ValueChanged<_ScheduleItem> onTaskTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final items = day.items;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: Container(
+        key: ValueKey('day_tasks_${day.offset}_${items.length}'),
+        width: double.infinity,
+        padding: EdgeInsets.all(11.w),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.background.withOpacity(0.36),
+          borderRadius: BorderRadius.circular(18.r),
+          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.10)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Icon(
+                  Icons.event_note_rounded,
+                  color: theme.colorScheme.primary,
+                  size: 18.sp,
+                ),
+                SizedBox(width: 7.w),
+                Expanded(
+                  child: Text(
+                    title,
+                    textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.right,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                      color: theme.colorScheme.surface
+),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 9.h),
+            if (items.isEmpty)
+              _EmptyDayLine(plansCount: plansCount, dayOffset: day.offset)
+            else
+              ...items.map(
+                    (item) => Padding(
+                  padding: EdgeInsets.only(bottom: 8.h),
+                  child: _DayTaskTile(
+                    item: item,
+                    onTap: () => onTaskTap(item),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DayTaskTile extends StatelessWidget {
+  const _DayTaskTile({required this.item, required this.onTap});
+
+  final _ScheduleItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16.r),
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 12.h),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondary,
+            borderRadius: BorderRadius.circular(16.r),
+            border: Border.all(
+              color: item.isRescue
+                  ? theme.colorScheme.primary.withOpacity(0.18)
+                  : theme.colorScheme.outline.withOpacity(0.10),
+            ),
+          ),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Container(
+                width: 36.w,
+                height: 36.w,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(13.r),
+                ),
+                child: Icon(item.icon, color: theme.colorScheme.primary, size: 18.sp),
+              ),
+              SizedBox(width: 9.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Row(
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.title,
+                            textDirection: TextDirection.rtl,
+                            textAlign: TextAlign.right,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                              color: theme.colorScheme.surface,
+                              height: 1.25
+),
+                          ),
+                        ),
+                        SizedBox(width: 6.w),
+                        Text(
+                          item.timeLabel,
+                          textDirection: TextDirection.rtl,
+                          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                            color: theme.colorScheme.primary,
+                            height: 1
+),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 3.h),
+                    Text(
+                      item.subtitle,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.surface.withOpacity(0.56),
+                        height: 1.35
+),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(30.r),
+                ),
+                child: Text(
+                  item.badge,
+                  textDirection: TextDirection.rtl,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.primary,
+                    height: 1
+),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyDayLine extends StatelessWidget {
+  const _EmptyDayLine({required this.plansCount, required this.dayOffset});
+
+  final int plansCount;
+  final int dayOffset;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final text = plansCount == 0
+        ? 'أنشئ خطة أولًا حتى تظهر مهام الحفظ والمراجعة.'
+        : dayOffset == 0
+        ? 'لا توجد مهام إضافية اليوم.'
+        : 'هذا اليوم فارغ من مهام المراجعة حتى الآن.';
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(10.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary.withOpacity(0.70),
+        borderRadius: BorderRadius.circular(15.r),
+      ),
+      child: Text(
+        text,
+        textDirection: TextDirection.rtl,
+        textAlign: TextAlign.right,
+        style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+          color: theme.colorScheme.surface.withOpacity(0.58),
+          height: 1.4
+),
+      ),
+    );
+  }
+}
+
+class _ScheduleData {
+  final int plansCount;
+  final List<_ScheduleItem> items;
+
+  const _ScheduleData({required this.plansCount, required this.items});
+}
+
+class _ScheduleDay {
+  final int offset;
+  final DateTime date;
+  final List<_ScheduleItem> items;
+
+  const _ScheduleDay({
+    required this.offset,
+    required this.date,
+    required this.items,
+  });
+}
+
+class _ScheduleItem {
+  final DateTime date;
+  final String title;
+  final String subtitle;
+  final String badge;
+  final String timeLabel;
+  final IconData icon;
+  final int priority;
+  final MemorizationTodayTaskModel task;
+  final bool isRescue;
+
+  const _ScheduleItem({
+    required this.date,
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+    required this.timeLabel,
+    required this.icon,
+    required this.priority,
+    required this.task,
+    this.isRescue = false,
+  });
+
+  factory _ScheduleItem.fromJourney(MemorizationJourneyTask item) {
+    return _ScheduleItem.fromTask(
+      task: item.task,
+      date: item.date,
+      timeLabel: item.timeLabel,
+      priority: item.priority,
+      isRescue: false,
+    );
+  }
+
+  factory _ScheduleItem.fromTask({
+    required MemorizationTodayTaskModel task,
+    required DateTime date,
+    required String timeLabel,
+    required int priority,
+    required bool isRescue,
+  }) {
+    final type = task.type;
+    final isNew = type == 'dailyNew';
+    final isTest = type == 'selfTest';
+    final isWeak = type == 'weakReview' || isRescue;
+
+    return _ScheduleItem(
+      date: DateTime(date.year, date.month, date.day),
+      title: task.title,
+      subtitle: isTest
+          ? 'اختبار مجدول حسب الخطة. تفاصيل الموضع تظهر عند فتح الاختبار.'
+          : task.scopeTitle.trim().isEmpty
+          ? task.subtitle
+          : '${task.scopeTitle} • ${task.subtitle}',
+      badge: isWeak
+          ? 'إنقاذ'
+          : isTest
+          ? 'اختبار'
+          : isNew
+          ? 'حفظ'
+          : 'مراجعة',
+      timeLabel: timeLabel,
+      icon: isWeak
+          ? Icons.healing_rounded
+          : isTest
+          ? Icons.fact_check_rounded
+          : isNew
+          ? Icons.menu_book_rounded
+          : Icons.repeat_rounded,
+      priority: priority,
+      task: task,
+      isRescue: isWeak,
+    );
+  }
+}
+
+
+class _MonthCalendarSheet extends StatefulWidget {
+  const _MonthCalendarSheet({required this.data});
+
+  final _ScheduleData data;
+
+  @override
+  State<_MonthCalendarSheet> createState() => _MonthCalendarSheetState();
+}
+
+class _MonthCalendarSheetState extends State<_MonthCalendarSheet> {
+  late DateTime selectedDate;
+  late PageController pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    selectedDate = DateTime(now.year, now.month, now.day);
+    pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    pageController.dispose();
+    super.dispose();
+  }
+
+  DateTime _monthForPage(int page) {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month + page, 1);
+  }
+
+  int get _monthsCount {
+    if (widget.data.items.isEmpty) return 12;
+
+    final now = DateTime.now();
+    final firstMonth = DateTime(now.year, now.month, 1);
+    DateTime lastMonth = firstMonth;
+
+    for (final item in widget.data.items) {
+      final itemMonth = DateTime(item.date.year, item.date.month, 1);
+      if (itemMonth.isAfter(lastMonth)) lastMonth = itemMonth;
+    }
+
+    final diff = (lastMonth.year - firstMonth.year) * 12 +
+        (lastMonth.month - firstMonth.month) +
+        1;
+
+    return diff.clamp(12, 48).toInt();
+  }
+
+  List<_ScheduleItem> _itemsForDate(DateTime date) {
+    return widget.data.items.where((item) => _sameDay(item.date, date)).toList()
+      ..sort((a, b) => a.priority.compareTo(b.priority));
+  }
+
+  bool _sameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  Future<void> _openTask(_ScheduleItem item) async {
+    AppHaptics.tap(context);
+
+    if (!item.task.hasValidRange) return;
+
+
+    // مؤقتًا: نسمح بفتح مهام التقويم القادمة أثناء تطوير النظام.
+    // كارت مهام اليوم يظل هو المسؤول عن عرض المستحق اليوم فقط.
+
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => item.task.type == 'selfTest'
+            ? MemorizationTestSessionPage(task: item.task)
+            : MemorizationTrainingSessionPage(task: item.task),
+      ),
+    );
+  }
+
+  String _monthTitle(DateTime month) {
+    const months = [
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو',
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر',
+    ];
+
+    return '${months[month.month - 1]} ${month.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final selectedItems = _itemsForDate(selectedDate);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.86,
+      minChildSize: 0.62,
+      maxChildSize: 0.96,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.background,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28.r)),
+          ),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            physics: const BouncingScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(14.w, 10.h, 14.w, 22.h),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42.w,
+                    height: 4.h,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface.withOpacity(0.16),
+                      borderRadius: BorderRadius.circular(20.r),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 14.h),
+                _MonthSheetHeader(),
+                SizedBox(height: 14.h),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(13.w),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondary,
+                    borderRadius: BorderRadius.circular(24.r),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withOpacity(0.12),
+                    ),
+                  ),
+                  child: SizedBox(
+                    height: 230.h,
+                    child: PageView.builder(
+                      controller: pageController,
+                      reverse: true,
+                      itemCount: _monthsCount,
+                      itemBuilder: (context, page) {
+                        final month = _monthForPage(page);
+                        return _MonthGrid(
+                          month: month,
+                          title: _monthTitle(month),
+                          selectedDate: selectedDate,
+                          itemsForDate: _itemsForDate,
+                          onDayTap: (date) {
+                            AppHaptics.tap(context);
+                            setState(() => selectedDate = date);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                SizedBox(height: 12.h),
+                _SelectedDateTasksCard(
+                  date: selectedDate,
+                  items: selectedItems,
+                  plansCount: widget.data.plansCount,
+                  onTaskTap: _openTask,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MonthSheetHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      textDirection: TextDirection.rtl,
+      children: [
+        Container(
+          width: 42.w,
+          height: 42.w,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primary.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(15.r),
+          ),
+          child: Icon(
+            Icons.calendar_month_rounded,
+            color: theme.colorScheme.primary,
+            size: 23.sp,
+          ),
+        ),
+        SizedBox(width: 10.w),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'تقويم الخطة الشهري',
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface
+),
+              ),
+              SizedBox(height: 3.h),
+              Text(
+                'الألوان توضّح نوع المهمة مباشرة، واضغط على أي يوم لعرض التفاصيل.',
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.right,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.surface.withOpacity(0.58),
+                  height: 1.4
+),
+              ),
+              SizedBox(height: 7.h),
+              const _CalendarLegendRow(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+
+class _CalendarLegendRow extends StatelessWidget {
+  const _CalendarLegendRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Wrap(
+      textDirection: TextDirection.rtl,
+      alignment: WrapAlignment.end,
+      spacing: 8.w,
+      runSpacing: 5.h,
+      children: [
+        _LegendItem(label: 'حفظ', color: theme.colorScheme.primary),
+        const _LegendItem(label: 'مراجعة', color: Colors.orange),
+        const _LegendItem(label: 'إنقاذ', color: Colors.red),
+        const _LegendItem(label: 'اختبار', color: Colors.indigo),
+      ],
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      textDirection: TextDirection.rtl,
+      children: [
+        Container(
+          width: 6.w,
+          height: 6.w,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        SizedBox(width: 4.w),
+        Text(
+          label,
+          textDirection: TextDirection.rtl,
+          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+            color: theme.colorScheme.surface.withOpacity(0.62)
+),
+        ),
+      ],
+    );
+  }
+}
+
+
+class _MonthGrid extends StatelessWidget {
+  const _MonthGrid({
+    required this.month,
+    required this.title,
+    required this.selectedDate,
+    required this.itemsForDate,
+    required this.onDayTap,
+  });
+
+  final DateTime month;
+  final String title;
+  final DateTime selectedDate;
+  final List<_ScheduleItem> Function(DateTime date) itemsForDate;
+  final ValueChanged<DateTime> onDayTap;
+
+  bool _sameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final firstDay = DateTime(month.year, month.month, 1);
+    final daysCount = DateTime(month.year, month.month + 1, 0).day;
+    final firstWeekday = firstDay.weekday;
+    final leadingEmpty = firstWeekday - 1;
+    final totalCells = leadingEmpty + daysCount;
+    final rows = (totalCells / 7).ceil();
+
+    const weekDays = [
+      'إثنين',
+      'ثللاثاء',
+      'أرباء',
+      'خميس',
+      'جمعه',
+      'سبت',
+      'أحد',
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface
+),
+              ),
+            ),
+            Icon(
+              Icons.swipe_rounded,
+              color: theme.colorScheme.primary.withOpacity(0.78),
+              size: 18.sp,
+            ),
+          ],
+        ),
+        SizedBox(height: 12.h),
+        Row(
+          textDirection: TextDirection.rtl,
+          children: weekDays.map((day) {
+            return Expanded(
+              child: Center(
+                child: Text(
+                  day,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface.withOpacity(0.50)
+),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        SizedBox(height: 8.h),
+        Expanded(
+          child: GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: rows * 7,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7,
+              mainAxisSpacing: 6.h,
+              crossAxisSpacing: 6.w,
+            ),
+            itemBuilder: (context, index) {
+              final dayNumber = index - leadingEmpty + 1;
+
+              if (dayNumber < 1 || dayNumber > daysCount) {
+                return const SizedBox.shrink();
+              }
+
+              final date = DateTime(month.year, month.month, dayNumber);
+              final items = itemsForDate(date);
+              final isSelected = _sameDay(date, selectedDate);
+              final now = DateTime.now();
+              final isToday = _sameDay(date, DateTime(now.year, now.month, now.day));
+
+              return _MonthDayCell(
+                date: date,
+                count: items.length,
+                isSelected: isSelected,
+                isToday: isToday,
+                hasNew: items.any((item) => item.task.type == 'dailyNew'),
+                hasReview: items.any((item) => item.task.type == 'dailyReview'),
+                hasTest: items.any((item) => item.task.type == 'selfTest'),
+                hasRescue: items.any((item) => item.isRescue),
+                onTap: () => onDayTap(date),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MonthDayCell extends StatelessWidget {
+  const _MonthDayCell({
+    required this.date,
+    required this.count,
+    required this.isSelected,
+    required this.isToday,
+    required this.hasNew,
+    required this.hasReview,
+    required this.hasTest,
+    required this.hasRescue,
+    required this.onTap,
+  });
+
+  final DateTime date;
+  final int count;
+  final bool isSelected;
+  final bool isToday;
+  final bool hasNew;
+  final bool hasReview;
+  final bool hasTest;
+  final bool hasRescue;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final highlighted = isSelected || isToday;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14.r),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            color: highlighted
+                ? theme.colorScheme.primary.withOpacity(isSelected ? 0.16 : 0.09)
+                : theme.colorScheme.background.withOpacity(0.34),
+            borderRadius: BorderRadius.circular(14.r),
+            border: Border.all(
+              color: isSelected
+                  ? theme.colorScheme.primary.withOpacity(0.48)
+                  : theme.colorScheme.outline.withOpacity(0.08),
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '${date.day}',
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface,
+                  height: 1
+),
+              ),
+              SizedBox(height: 5.h),
+              _TaskDotsRow(
+                hasNew: hasNew,
+                hasReview: hasReview,
+                hasTest: hasTest,
+                hasRescue: hasRescue,
+                count: count,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TaskDotsRow extends StatelessWidget {
+  const _TaskDotsRow({
+    required this.hasNew,
+    required this.hasReview,
+    required this.hasTest,
+    required this.hasRescue,
+    required this.count,
+  });
+
+  final bool hasNew;
+  final bool hasReview;
+  final bool hasTest;
+  final bool hasRescue;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final activeDots = [hasNew, hasReview, hasTest, hasRescue].where((value) => value).length;
+
+    if (count == 0 || activeDots == 0) {
+      return Container(
+        width: 4.w,
+        height: 4.w,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface.withOpacity(0.10),
+          shape: BoxShape.circle,
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasNew) _Dot(color: theme.colorScheme.primary),
+        if (hasReview) _Dot(color: Colors.orange),
+        if (hasRescue) _Dot(color: Colors.red),
+        if (hasTest) _Dot(color: Colors.indigo),
+      ],
+    );
+  }
+}
+
+class _Dot extends StatelessWidget {
+  const _Dot({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 4.5.w,
+      height: 4.5.w,
+      margin: EdgeInsets.symmetric(horizontal: 1.w),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+}
+
+class _SelectedDateTasksCard extends StatelessWidget {
+  const _SelectedDateTasksCard({
+    required this.date,
+    required this.items,
+    required this.plansCount,
+    required this.onTaskTap,
+  });
+
+  final DateTime date;
+  final List<_ScheduleItem> items;
+  final int plansCount;
+  final ValueChanged<_ScheduleItem> onTaskTap;
+
+  String _titleForDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final selected = DateTime(date.year, date.month, date.day);
+    final diff = selected.difference(today).inDays;
+
+    if (diff == 0) return 'مهام اليوم';
+    if (diff == 1) return 'مهام الغد';
+    return 'مهام يوم ${date.day}/${date.month}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(Icons.event_note_rounded, color: theme.colorScheme.primary, size: 19.sp),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: Text(
+                  _titleForDate(date),
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface
+),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 10.h),
+          if (items.isEmpty)
+            _EmptyDayLine(
+              plansCount: plansCount,
+              dayOffset: DateTime(date.year, date.month, date.day)
+                  .difference(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day))
+                  .inDays,
+            )
+          else
+            ...items.map(
+                  (item) => Padding(
+                padding: EdgeInsets.only(bottom: 8.h),
+                child: _DayTaskTile(item: item, onTap: () => onTaskTap(item)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}

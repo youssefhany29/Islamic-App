@@ -1,0 +1,179 @@
+import 'dart:math' as math;
+
+import '../models/memorization_active_plan_model.dart';
+import '../models/memorization_plan_intensity.dart';
+import '../models/memorization_test_preferences.dart';
+import 'memorization_plan_progress_resolver.dart';
+import 'memorization_plan_storage.dart';
+import 'memorization_session_result_storage.dart';
+
+enum MemorizationMissedDayStrategy {
+  automatic,
+  lightCompression,
+  strongCompression,
+  extendPlan,
+}
+
+class MemorizationPlanRescheduleRequest {
+  final int remainingLearningDays;
+  final double? dailyPages;
+  final int? weeklyRestDays;
+  final MemorizationPlanIntensity? intensity;
+  final int? plannedTestsCount;
+  final MemorizationTestPreferences? testPreferences;
+  final int? reviewEveryDays;
+
+  const MemorizationPlanRescheduleRequest({
+    required this.remainingLearningDays,
+    this.dailyPages,
+    this.weeklyRestDays,
+    this.intensity,
+    this.plannedTestsCount,
+    this.testPreferences,
+    this.reviewEveryDays,
+  });
+}
+
+class MemorizationPlanRescheduler {
+  const MemorizationPlanRescheduler({
+    this.progressResolver = const MemorizationPlanProgressResolver(),
+    this.intensityResolver = const MemorizationPlanIntensityResolver(),
+  });
+
+  final MemorizationPlanProgressResolver progressResolver;
+  final MemorizationPlanIntensityResolver intensityResolver;
+
+  Future<MemorizationActivePlanModel?> rescheduleActivePlan(
+    MemorizationPlanRescheduleRequest request,
+  ) async {
+    final plan = await MemorizationPlanStorage.getActivePlan();
+    if (plan == null) return null;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final results = await MemorizationSessionResultStorage.getResults();
+    final progress = progressResolver.resolve(
+      plan: plan,
+      results: results,
+      today: today,
+    );
+
+    final completedNewAyahs = results
+        .where((result) {
+          return result.completedAt.isAfter(plan.createdAt) &&
+              result.taskType == 'dailyNew' &&
+              result.endGlobalAyahIndex >= plan.scopeStartGlobalAyahIndex &&
+              result.startGlobalAyahIndex <= plan.scopeEndGlobalAyahIndex;
+        })
+        .fold<int>(0, (sum, result) => sum + result.ayahsCount);
+
+    final completionRatio = plan.totalAyahs <= 0
+        ? 0.0
+        : (completedNewAyahs / plan.totalAyahs).clamp(0.0, 1.0);
+    final remainingPages = math.max(
+      0.5,
+      plan.totalPages * (1 - completionRatio),
+    );
+    final remainingDays = request.remainingLearningDays.clamp(1, 3650).toInt();
+    final requestedDailyPages =
+        request.dailyPages ?? remainingPages / remainingDays;
+    final resolvedIntensity =
+        request.intensity ??
+        intensityResolver.resolve(
+          totalPages: remainingPages.ceil(),
+          targetLearningDays: remainingDays,
+        );
+    final remainingSessions = intensityResolver.learningSessionsCount(
+      totalPages: remainingPages.ceil(),
+      targetLearningDays: remainingDays,
+      requestedDailyPages: requestedDailyPages,
+      intensity: resolvedIntensity,
+    );
+    final elapsedDays =
+        today
+            .difference(
+              DateTime(
+                plan.createdAt.year,
+                plan.createdAt.month,
+                plan.createdAt.day,
+              ),
+            )
+            .inDays +
+        1;
+    final newTargetDays = math.max(1, elapsedDays - 1 + remainingDays);
+    final restDays = request.weeklyRestDays ?? plan.weeklyRestDays;
+    final restExtra = ((remainingDays / 7).ceil() * restDays).clamp(0, 9999);
+    final futureTests = _estimatedAutomaticTests(remainingDays);
+
+    final updated = plan.copyWith(
+      totalDays: newTargetDays,
+      targetLearningDays: newTargetDays,
+      learningSessionsCount: progress.completedNewCount + remainingSessions,
+      effectiveCalendarDays:
+          elapsedDays - 1 + remainingDays + restExtra + futureTests,
+      dailyNewPages: requestedDailyPages.clamp(0.5, 604).toDouble(),
+      intensityModeName: resolvedIntensity.code,
+      plannedTestsCount: futureTests,
+      testPreferences: request.testPreferences ?? plan.testPreferences,
+      weeklyRestDays: restDays,
+      reviewEveryDays: request.reviewEveryDays,
+      planVersion: plan.planVersion + 1,
+      durationText: '$newTargetDays يوم للحفظ، مع تقويم فعلي موزع',
+      loadText: resolvedIntensity.title,
+      updatedAt: now,
+    );
+
+    await MemorizationPlanStorage.saveUpdatedPlan(updated);
+    return updated;
+  }
+
+  int _estimatedAutomaticTests(int learningDays) {
+    if (learningDays < 5) return 1;
+    if (learningDays <= 10) return 2;
+    if (learningDays <= 20) return 3;
+    return math.max(
+      2,
+      (learningDays / 7).floor() + (learningDays / 30).floor() + 1,
+    );
+  }
+
+  Future<MemorizationActivePlanModel?> handleMissedDays({
+    required int missedDays,
+    required MemorizationMissedDayStrategy strategy,
+  }) async {
+    final plan = await MemorizationPlanStorage.getActivePlan();
+    if (plan == null) return null;
+
+    final safeMissed = missedDays.clamp(1, 365).toInt();
+    final currentRemaining = math.max(
+      1,
+      plan.targetLearningDays - plan.currentPlanDay + 1,
+    );
+    int days = currentRemaining;
+    MemorizationPlanIntensity? intensity;
+
+    switch (strategy) {
+      case MemorizationMissedDayStrategy.automatic:
+        days = currentRemaining;
+        break;
+      case MemorizationMissedDayStrategy.lightCompression:
+        days = math.max(1, currentRemaining - (safeMissed / 2).ceil());
+        intensity = MemorizationPlanIntensity.strong;
+        break;
+      case MemorizationMissedDayStrategy.strongCompression:
+        days = math.max(1, currentRemaining - safeMissed);
+        intensity = MemorizationPlanIntensity.intensive;
+        break;
+      case MemorizationMissedDayStrategy.extendPlan:
+        days = currentRemaining + safeMissed;
+        break;
+    }
+
+    return rescheduleActivePlan(
+      MemorizationPlanRescheduleRequest(
+        remainingLearningDays: days,
+        intensity: intensity,
+      ),
+    );
+  }
+}

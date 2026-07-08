@@ -1,0 +1,682 @@
+part of '../pages/memorization_test_session_page.dart';
+
+class _TestResultSheet extends StatelessWidget {
+  const _TestResultSheet({
+    required this.totalQuestions,
+    required this.correctAnswers,
+    required this.skippedCount,
+    required this.timeoutCount,
+    required this.durationSeconds,
+    required this.score,
+    required this.ratingTitle,
+    required this.ratingMessage,
+    required this.isStandalone,
+    required this.timeExpired,
+    required this.timerLabel,
+    required this.questionTypeBreakdown,
+    required this.quickPlan,
+    required this.canActivateQuickPlan,
+    required this.onActivateQuickPlan,
+    required this.onReviewAgain,
+    required this.onClose,
+  });
+
+  final int totalQuestions;
+  final int correctAnswers;
+  final int skippedCount;
+  final int timeoutCount;
+  final int durationSeconds;
+  final double score;
+  final String ratingTitle;
+  final String ratingMessage;
+  final bool isStandalone;
+  final bool timeExpired;
+  final String timerLabel;
+  final Map<String, int> questionTypeBreakdown;
+  final MemorizationQuickStabilizationPlan? quickPlan;
+  final bool canActivateQuickPlan;
+  final VoidCallback? onActivateQuickPlan;
+  final VoidCallback onReviewAgain;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final percent = (score * 100).round().clamp(0, 100).toInt();
+    final wrongCount = (totalQuestions - correctAnswers - skippedCount)
+        .clamp(0, totalQuestions)
+        .toInt();
+    final avgSeconds = totalQuestions <= 0
+        ? 0
+        : durationSeconds ~/ totalQuestions;
+    final minutes = durationSeconds ~/ 60;
+    final seconds = durationSeconds % 60;
+    final durationLabel =
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.all(14.w),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(18.w),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondary,
+            borderRadius: BorderRadius.circular(28.r),
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42.w,
+                    height: 5.h,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(20.r),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 18.h),
+                Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Container(
+                      width: 48.w,
+                      height: 48.w,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.emoji_events_rounded,
+                        color: theme.colorScheme.primary,
+                        size: 25.sp,
+                      ),
+                    ),
+                    SizedBox(width: 12.w),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            ratingTitle,
+                            textDirection: TextDirection.rtl,
+                            textAlign: TextAlign.right,
+                            style: AppTextStyles.body(context).copyWith(
+                              fontWeight: FontWeight.w900,
+                              color: theme.colorScheme.surface,
+                            ),
+                          ),
+                          SizedBox(height: 4.h),
+                          Text(
+                            'نتيجتك $percent%',
+                            textDirection: TextDirection.rtl,
+                            textAlign: TextAlign.right,
+                            style: AppTextStyles.caption(context).copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 14.h),
+                _ResultInfoBox(
+                  text: 'الإجابات الصحيحة: $correctAnswers من $totalQuestions',
+                  progress: score.clamp(0, 1),
+                ),
+                if (isStandalone) ...[
+                  SizedBox(height: 10.h),
+                  _StandaloneResultDetailsBox(
+                    wrongCount: wrongCount,
+                    skippedCount: skippedCount,
+                    timeoutCount: timeoutCount,
+                    durationLabel: durationLabel,
+                    avgSeconds: avgSeconds,
+                    timeExpired: timeExpired,
+                    timerLabel: timerLabel,
+                    questionTypeBreakdown: questionTypeBreakdown,
+                  ),
+                ],
+                SizedBox(height: 12.h),
+                Text(
+                  ratingMessage,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.surface.withOpacity(0.70),
+                    height: 1.55,
+                  ),
+                ),
+                if (quickPlan != null) ...[
+                  SizedBox(height: 14.h),
+                  _QuickPlanResultBox(
+                    quickPlan: quickPlan!,
+                    canActivate: canActivateQuickPlan,
+                    onActivate: onActivateQuickPlan,
+                  ),
+                ],
+                if (isStandalone) ...[
+                  SizedBox(height: 14.h),
+                  _StandaloneSuggestionsBox(score: score),
+                ],
+                SizedBox(height: 18.h),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SheetButton(
+                        label: 'خروج',
+                        icon: Icons.close_rounded,
+                        onTap: onClose,
+                        isPrimary: false,
+                      ),
+                    ),
+                    SizedBox(width: 10.w),
+                    Expanded(
+                      child: _SheetButton(
+                        label: 'إعادة الاختبار',
+                        icon: Icons.refresh_rounded,
+                        onTap: onReviewAgain,
+                        isPrimary: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultInfoBox extends StatelessWidget {
+  const _ResultInfoBox({required this.text, required this.progress});
+
+  final String text;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background.withOpacity(0.35),
+        borderRadius: BorderRadius.circular(18.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            text,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20.r),
+            child: LinearProgressIndicator(
+              minHeight: 8.h,
+              value: progress,
+              backgroundColor: theme.colorScheme.surface.withOpacity(0.07),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StandaloneResultDetailsBox extends StatelessWidget {
+  const _StandaloneResultDetailsBox({
+    required this.wrongCount,
+    required this.skippedCount,
+    required this.timeoutCount,
+    required this.durationLabel,
+    required this.avgSeconds,
+    required this.timeExpired,
+    required this.timerLabel,
+    required this.questionTypeBreakdown,
+  });
+
+  final int wrongCount;
+  final int skippedCount;
+  final int timeoutCount;
+  final String durationLabel;
+  final int avgSeconds;
+  final bool timeExpired;
+  final String timerLabel;
+  final Map<String, int> questionTypeBreakdown;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final rows = <String>[
+      'الأخطاء: $wrongCount',
+      'المتروك: $skippedCount',
+      'انتهى وقته: $timeoutCount',
+      'الوقت المستغرق: $durationLabel',
+      'متوسط السؤال: $avgSeconds ثانية',
+      if (timerLabel.trim().isNotEmpty) 'نظام الوقت: $timerLabel',
+      if (timeExpired) 'تم إنهاء الاختبار بسبب انتهاء الوقت',
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'تفاصيل المحاولة',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w900,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 7.w,
+            runSpacing: 7.h,
+            children: [
+              for (final row in rows)
+                _ResultChip(
+                  text: row,
+                  icon: Icons.check_circle_outline_rounded,
+                ),
+            ],
+          ),
+          if (questionTypeBreakdown.isNotEmpty) ...[
+            SizedBox(height: 10.h),
+            Text(
+              'تحليل حسب نوع السؤال',
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              style: AppTextStyles.caption(context).copyWith(
+                fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface,
+              ),
+            ),
+            SizedBox(height: 7.h),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 7.w,
+              runSpacing: 7.h,
+              children: [
+                for (final entry in questionTypeBreakdown.entries)
+                  _ResultChip(
+                    text: '${entry.key}: ${entry.value}',
+                    icon: Icons.category_rounded,
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StandaloneSuggestionsBox extends StatelessWidget {
+  const _StandaloneSuggestionsBox({required this.score});
+
+  final double score;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final suggestions = score >= 0.85
+        ? const <String>[
+            'جرّب مستوى أصعب على نفس النطاق.',
+            'وسّع النطاق تدريجيًا لو النتيجة ثابتة.',
+            'اختبر نفسك بوقت كامل كتحدّي هادئ.',
+          ]
+        : score >= 0.60
+        ? const <String>[
+            'أعد اختبار الأخطاء فقط.',
+            'راجع المواضع الضعيفة ثم جرّب اختبارًا أقصر.',
+            'استخدم اختبار بدون وقت للتدريب.',
+          ]
+        : const <String>[
+            'ابدأ بمراجعة قصيرة للمواضع الضعيفة.',
+            'جرّب أسئلة الكلمات فقط بدون وقت.',
+            'افتح المصحف على مواضع الخطأ قبل إعادة الاختبار.',
+          ];
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background.withOpacity(0.35),
+        borderRadius: BorderRadius.circular(18.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'اقتراحات بعد الاختبار',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          for (final suggestion in suggestions)
+            Padding(
+              padding: EdgeInsets.only(bottom: 5.h),
+              child: Row(
+                textDirection: TextDirection.rtl,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.lightbulb_rounded,
+                    color: theme.colorScheme.primary,
+                    size: 14.sp,
+                  ),
+                  SizedBox(width: 6.w),
+                  Expanded(
+                    child: Text(
+                      suggestion,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: AppTextStyles.caption(context).copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.surface.withOpacity(0.70),
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResultChip extends StatelessWidget {
+  const _ResultChip({required this.text, required this.icon});
+
+  final String text;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(14.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.08)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        textDirection: TextDirection.rtl,
+        children: [
+          Icon(icon, size: 13.sp, color: theme.colorScheme.primary),
+          SizedBox(width: 5.w),
+          Text(
+            text,
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w800,
+              color: theme.colorScheme.surface.withOpacity(0.76),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickPlanResultBox extends StatelessWidget {
+  const _QuickPlanResultBox({
+    required this.quickPlan,
+    required this.canActivate,
+    required this.onActivate,
+  });
+
+  final MemorizationQuickStabilizationPlan quickPlan;
+  final bool canActivate;
+  final VoidCallback? onActivate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                Icons.spa_rounded,
+                color: theme.colorScheme.primary,
+                size: 20.sp,
+              ),
+              SizedBox(width: 7.w),
+              Expanded(
+                child: Text(
+                  'جهزنا لك رحلة تثبيت قصيرة',
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+                    fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8.h),
+          Text(
+            '${quickPlan.days} أيام • ${quickPlan.ayahsCount} آية • اختبارات تلقائية حسب تقدمك',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w700,
+              color: theme.colorScheme.surface.withOpacity(0.66),
+              height: 1.5,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          ...quickPlan.focusPoints.map(
+            (point) => Padding(
+              padding: EdgeInsets.only(bottom: 5.h),
+              child: Row(
+                textDirection: TextDirection.rtl,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.check_circle_rounded,
+                    color: theme.colorScheme.primary,
+                    size: 14.sp,
+                  ),
+                  SizedBox(width: 6.w),
+                  Expanded(
+                    child: Text(
+                      point,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: AppTextStyles.caption(context).copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.surface.withOpacity(0.68),
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(height: 10.h),
+          SizedBox(
+            width: double.infinity,
+            child: Material(
+              color: canActivate
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.surface.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(17.r),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(17.r),
+                onTap: canActivate ? onActivate : null,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12.h),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 18.sp,
+                      ),
+                      SizedBox(width: 7.w),
+                      Flexible(
+                        child: Text(
+                          'ابدأ رحلة التثبيت',
+                          textDirection: TextDirection.rtl,
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          softWrap: true,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.caption(context).copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetButton extends StatelessWidget {
+  const _SheetButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    required this.isPrimary,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: isPrimary
+          ? theme.colorScheme.primary
+          : theme.colorScheme.background,
+      borderRadius: BorderRadius.circular(18.r),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18.r),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 13.h),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                icon,
+                color: isPrimary ? Colors.white : theme.colorScheme.primary,
+                size: 17.sp,
+              ),
+              SizedBox(width: 6.w),
+              Flexible(
+                child: Text(
+                  label,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  softWrap: true,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+                    fontWeight: FontWeight.w900,
+                    color: isPrimary ? Colors.white : theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyTestState extends StatelessWidget {
+  const _EmptyTestState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(22.w),
+        child: Text(
+          'لا توجد أسئلة جاهزة لهذا الاختبار الآن.',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: AppTextStyles.caption(context).copyWith(
+            fontWeight: FontWeight.w800,
+            color: theme.colorScheme.surface.withOpacity(0.65),
+          ),
+        ),
+      ),
+    );
+  }
+}

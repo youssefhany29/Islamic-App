@@ -1,0 +1,1347 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+import '../services/recitation_custom_goals_storage.dart';
+import '../widgets/recitation_custom_goals_card.dart';
+import 'recitation_custom_goal_editor_page.dart';
+import '../models/recitation_achievement_model.dart';
+import '../services/recitation_listening_stats_storage.dart';
+import 'recitation_listening_goal_page.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+class RecitationListeningStatsPage extends StatefulWidget {
+  const RecitationListeningStatsPage({super.key});
+
+  @override
+  State<RecitationListeningStatsPage> createState() =>
+      _RecitationListeningStatsPageState();
+}
+
+class _RecitationListeningStatsPageState
+    extends State<RecitationListeningStatsPage> {
+  RecitationListeningStatsData? stats;
+  bool isLoading = true;
+  List<RecitationCustomGoalProgress> customGoals = [];
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    final loadedStats = await RecitationListeningStatsStorage.loadStats();
+    final loadedCustomGoals =
+    await RecitationCustomGoalsStorage.loadGoalsProgress();
+
+    if (!mounted) return;
+
+    setState(() {
+      stats = loadedStats;
+      customGoals = loadedCustomGoals;
+      isLoading = false;
+    });
+  }
+
+  Future<void> _openCustomGoalEditor() async {
+    AppHaptics.tap(context);
+
+    final result = await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+        const RecitationCustomGoalEditorPage(),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    if (result == true) {
+      await _loadStats();
+    }
+  }
+
+  Future<void> _deleteCustomGoal(String id) async {
+    await RecitationCustomGoalsStorage.deleteGoal(id);
+    await _loadStats();
+  }
+
+  Future<void> _openGoalPage() async {
+    AppHaptics.tap(context);
+
+    final result = await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+        const RecitationListeningGoalPage(),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    if (result == true) {
+      await _loadStats();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = Theme.of(context).colorScheme.onBackground;
+    final primary = Theme.of(context).colorScheme.primary;
+    final loadedStats = stats;
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 14.w),
+          child: Column(
+            children: [
+              _Header(
+                title: 'إحصائيات الاستماع',
+                onBack: () {
+                  AppHaptics.tap(context);
+                  Navigator.pop(context);
+                },
+                trailing: IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(
+                    minWidth: 38.w,
+                    minHeight: 38.h,
+                  ),
+                  onPressed: _openGoalPage,
+                  icon: Icon(
+                    Icons.track_changes_rounded,
+                    size: 21.sp,
+                    color: primary,
+                  ),
+                ),
+              ),
+              SizedBox(height: 12.h),
+              Expanded(
+                child: isLoading
+                    ? Center(
+                  child: CircularProgressIndicator(
+                    color: primary,
+                  ),
+                )
+                    : loadedStats == null
+                    ? Center(
+                  child: Text(
+                    'لا توجد إحصائيات بعد',
+                    textDirection: TextDirection.rtl,
+                    style: AppTextStyles.caption(context).copyWith(
+color: textColor.withOpacity(0.65)
+),
+                  ),
+                )
+                    : RefreshIndicator(
+                  color: primary,
+                  onRefresh: _loadStats,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    children: [
+                      _DailyGoalProgressCard(
+                        stats: loadedStats,
+                      ),
+                      SizedBox(height: 10.h),
+                      _GoalEditHintCard(
+                        onTap: _openGoalPage,
+                      ),
+                      SizedBox(height: 10.h),
+                      _WeeklyBadgeCard(stats: loadedStats),
+                      SizedBox(height: 10.h),
+                      _TodaySummaryCard(stats: loadedStats),
+                      SizedBox(height: 10.h),
+                      _StreakStatusCard(stats: loadedStats),
+                      SizedBox(height: 10.h),
+                      _MonthlyStatsCard(stats: loadedStats),
+                      SizedBox(height: 10.h),
+                      _AnalyticsCard(stats: loadedStats),
+                      SizedBox(height: 10.h),
+                      _WeeklyHistoryCard(stats: loadedStats),
+                      SizedBox(height: 10.h),
+                      RecitationCustomGoalsCard(
+                        goals: customGoals,
+                        onAddGoal: _openCustomGoalEditor,
+                        onDeleteGoal: _deleteCustomGoal,
+                      ),
+                      SizedBox(height: 10.h),
+                      _AchievementsCard(
+                        achievements: loadedStats.achievements,
+                      ),
+                      SizedBox(height: 10.h),
+                      _MotivationCard(),
+                      SizedBox(height: 18.h),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Header extends StatelessWidget {
+  final String title;
+  final VoidCallback onBack;
+  final Widget? trailing;
+
+  const _Header({
+    required this.title,
+    required this.onBack,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = Theme.of(context).colorScheme.onBackground;
+
+    return Padding(
+      padding: EdgeInsets.only(top: 12.h),
+      child: Row(
+        textDirection: TextDirection.ltr,
+        children: [
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: BoxConstraints(
+              minWidth: 38.w,
+              minHeight: 38.h,
+            ),
+            onPressed: onBack,
+            icon: Icon(
+              Icons.arrow_back_ios_new_rounded,
+              size: 18.sp,
+              color: textColor,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              title,
+              textAlign: TextAlign.center,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.headline(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: textColor
+),
+            ),
+          ),
+          trailing ?? SizedBox(width: 38.w),
+        ],
+      ),
+    );
+  }
+}
+
+class _DailyGoalProgressCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _DailyGoalProgressCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final todayText = RecitationListeningStatsStorage.formatListeningTime(
+      stats.todaySeconds,
+    );
+    final goalText = RecitationListeningStatsStorage.formatListeningTime(
+      stats.dailyGoalSeconds,
+    );
+    final percentage = (stats.todayProgress * 100).round();
+
+    return _MainTrackingCard(
+      child: _InnerDarkCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                CircleAvatar(
+                  radius: 19.r,
+                  backgroundColor: Colors.white,
+                  child: Icon(
+                    Icons.track_changes_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 21.sp,
+                  ),
+                ),
+                SizedBox(width: 10.w),
+                Expanded(
+                  child: Text(
+                    stats.completedTodayGoal
+                        ? 'ما شاء الله، أتممت ورد الاستماع اليومي'
+                        : 'ورد الاستماع اليومي',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      height: 1.35
+),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 10.h),
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Expanded(
+                  child: Text(
+                    '$todayText من $goalText',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                      color: Colors.white.withOpacity(0.82)
+),
+                  ),
+                ),
+                SizedBox(width: 8.w),
+                Text(
+                  '$percentage%',
+                  textDirection: TextDirection.ltr,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: Colors.white
+),
+                ),
+              ],
+            ),
+            SizedBox(height: 9.h),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20.r),
+              child: LinearProgressIndicator(
+                value: stats.todayProgress,
+                minHeight: 7.h,
+                backgroundColor: Colors.white.withOpacity(0.24),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  Color(0xff21C58E),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GoalEditHintCard extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _GoalEditHintCard({
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xff171B26),
+      borderRadius: BorderRadius.circular(16.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16.r),
+        onTap: () {
+          AppHaptics.tap(context);
+          onTap();
+        },
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: 12.w,
+            vertical: 10.h,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16.r),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.12),
+              width: 0.8.w,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'يمكنك تعديل هدف الاستماع اليومي في أي وقت',
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                    color: Colors.white.withOpacity(0.82),
+                    height: 1.35
+),
+                ),
+              ),
+              SizedBox(width: 10.w),
+              Icon(
+                Icons.edit_rounded,
+                color: const Color(0xff21C58E),
+                size: 18.sp,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WeeklyBadgeCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _WeeklyBadgeCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final completedDays =
+        stats.weeklyHistory.where((day) => day.completedGoal).length;
+
+    final String message = completedDays >= 7
+        ? 'أسبوع كامل مكتمل، ما شاء الله ✨'
+        : completedDays >= 4
+        ? 'أسبوعك جيد، اقتربت من أسبوع كامل'
+        : 'اجعل هذا الأسبوع بداية جديدة مع القرآن';
+
+    return _InnerDarkCard(
+      borderColor: completedDays >= 7
+          ? const Color(0xff21C58E)
+          : Colors.white.withOpacity(0.12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              message,
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                color: Colors.white.withOpacity(0.82),
+                height: 1.35
+),
+            ),
+          ),
+          SizedBox(width: 10.w),
+          Icon(
+            Icons.workspace_premium_rounded,
+            color: completedDays >= 7
+                ? const Color(0xffffb300)
+                : Colors.white70,
+            size: 18.sp,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodaySummaryCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _TodaySummaryCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final todayText = RecitationListeningStatsStorage.formatListeningTime(
+      stats.todaySeconds,
+    );
+    final totalText = RecitationListeningStatsStorage.formatListeningTime(
+      stats.totalSeconds,
+    );
+    final percentage = (stats.todayProgress * 100).round();
+
+    return _MainTrackingCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const _SectionTitle(
+            title: 'ملخص اليوم',
+            icon: Icons.today_rounded,
+          ),
+          SizedBox(height: 10.h),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'استماع اليوم',
+                  value: todayText,
+                  icon: Icons.headphones_rounded,
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'نسبة الهدف',
+                  value: '$percentage%',
+                  icon: Icons.percent_rounded,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8.h),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'إجمالي الاستماع',
+                  value: totalText,
+                  icon: Icons.all_inclusive_rounded,
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'حالة اليوم',
+                  value: stats.completedTodayGoal ? 'مكتمل' : 'غير مكتمل',
+                  icon: stats.completedTodayGoal
+                      ? Icons.verified_rounded
+                      : Icons.hourglass_bottom_rounded,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StreakStatusCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _StreakStatusCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final weeklyCompletedDays =
+        stats.weeklyHistory.where((day) => day.completedGoal).length;
+
+    return _MainTrackingCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const _SectionTitle(
+            title: 'الثبات والمتابعة',
+            icon: Icons.local_fire_department_rounded,
+          ),
+          SizedBox(height: 10.h),
+          _StreakSlimCard(
+            streak: stats.streak,
+            bestStreak: stats.bestStreak,
+          ),
+          SizedBox(height: 8.h),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'أهداف مكتملة',
+                  value: '${stats.completedGoalDays}',
+                  icon: Icons.flag_rounded,
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'أسبوعك الحالي',
+                  value: '$weeklyCompletedDays / 7',
+                  icon: Icons.calendar_month_rounded,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StreakSlimCard extends StatelessWidget {
+  final int streak;
+  final int bestStreak;
+
+  const _StreakSlimCard({
+    required this.streak,
+    required this.bestStreak,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _InnerDarkCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: 12.w,
+        vertical: 9.h,
+      ),
+      child: SizedBox(
+        height: 40.h,
+        child: Stack(
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                width: 205.w,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'أيام متتالية: $streak',
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+                        color: Colors.white
+),
+                    ),
+                    SizedBox(height: 2.h),
+                    Text(
+                      'أفضل سلسلة: $bestStreak',
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w500,
+                        color: Colors.white.withOpacity(0.65)
+),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Icon(
+                Icons.local_fire_department_rounded,
+                color: Colors.orange,
+                size: 22.sp,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthlyStatsCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _MonthlyStatsCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final monthText = RecitationListeningStatsStorage.formatListeningTime(
+      stats.monthlySeconds,
+    );
+
+    return _MainTrackingCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const _SectionTitle(
+            title: 'إحصائيات الشهر',
+            icon: Icons.date_range_rounded,
+          ),
+          SizedBox(height: 10.h),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'استماع الشهر',
+                  value: monthText,
+                  icon: Icons.timer_rounded,
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'أهداف الشهر',
+                  value: '${stats.monthCompletedGoalDays}',
+                  icon: Icons.check_circle_outline_rounded,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8.h),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'سور مختلفة',
+                  value: '${stats.uniqueSurahCount}',
+                  icon: Icons.menu_book_rounded,
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _MiniStatCard(
+                  title: 'قراء مختلفون',
+                  value: '${stats.uniqueReciterCount}',
+                  icon: Icons.record_voice_over_rounded,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnalyticsCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _AnalyticsCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final topSurah = stats.topSurah;
+    final topReciter = stats.topReciter;
+
+    return _MainTrackingCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const _SectionTitle(
+            title: 'تحليل الاستماع',
+            icon: Icons.analytics_rounded,
+          ),
+          SizedBox(height: 10.h),
+          _AnalysisRow(
+            icon: Icons.schedule_rounded,
+            title: 'أكثر وقت تستمع فيه',
+            value: stats.topListeningTime.title,
+            subtitle: stats.topListeningTime.seconds <= 0
+                ? stats.topListeningTime.subtitle
+                : RecitationListeningStatsStorage.formatListeningTime(
+              stats.topListeningTime.seconds,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          _AnalysisRow(
+            icon: Icons.menu_book_rounded,
+            title: 'أكثر سورة تستمع لها',
+            value: topSurah?.name ?? 'لم يتحدد بعد',
+            subtitle: topSurah == null
+                ? 'استمع أكثر ليظهر التحليل'
+                : RecitationListeningStatsStorage.formatListeningTime(
+              topSurah.seconds,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          _AnalysisRow(
+            icon: Icons.record_voice_over_rounded,
+            title: 'أكثر قارئ تستمع له',
+            value: topReciter?.name ?? 'لم يتحدد بعد',
+            subtitle: topReciter == null
+                ? 'استمع أكثر ليظهر التحليل'
+                : RecitationListeningStatsStorage.formatListeningTime(
+              topReciter.seconds,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeeklyHistoryCard extends StatelessWidget {
+  final RecitationListeningStatsData stats;
+
+  const _WeeklyHistoryCard({
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (stats.weeklyHistory.isEmpty) return const SizedBox.shrink();
+
+    return _InnerDarkCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: 8.w,
+        vertical: 10.h,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              'آخر ٧ أيام',
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                color: Colors.white
+),
+            ),
+          ),
+          SizedBox(height: 8.h),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: stats.weeklyHistory.map((day) {
+              return Expanded(
+                child: Column(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width: 23.w,
+                      height: 23.w,
+                      decoration: BoxDecoration(
+                        color: day.completedGoal
+                            ? const Color(0xff21C58E)
+                            : day.listened
+                            ? Colors.white.withOpacity(0.32)
+                            : Colors.white.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(7.r),
+                        border: Border.all(
+                          color: day.isToday
+                              ? Colors.white
+                              : Colors.white.withOpacity(0.18),
+                          width: day.isToday ? 1.2.w : 0.6.w,
+                        ),
+                      ),
+                      child: day.completedGoal
+                          ? Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 15.sp,
+                      )
+                          : day.listened
+                          ? Icon(
+                        Icons.headphones_rounded,
+                        color: Colors.white,
+                        size: 13.sp,
+                      )
+                          : null,
+                    ),
+                    SizedBox(height: 4.h),
+                    Text(
+                      day.dayName,
+                      textDirection: TextDirection.rtl,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight:
+                        day.isToday ? FontWeight.w800 : FontWeight.w500,
+                        color: Colors.white.withOpacity(0.82)
+),
+                    ),
+                    SizedBox(height: 2.h),
+                    Text(
+                      day.seconds <= 0
+                          ? '-'
+                          : RecitationListeningStatsStorage.formatShortTime(
+                        day.seconds,
+                      ),
+                      textDirection: TextDirection.rtl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.caption(context).copyWith(
+color: Colors.white.withOpacity(0.52)
+),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementsCard extends StatelessWidget {
+  final List<RecitationAchievement> achievements;
+
+  const _AchievementsCard({
+    required this.achievements,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final earnedCount = achievements.where((item) => item.earned).length;
+
+    return _MainTrackingCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _SectionTitle(
+            title: 'جوائز الاستماع  $earnedCount / ${achievements.length}',
+            icon: Icons.emoji_events_rounded,
+          ),
+          SizedBox(height: 10.h),
+          ...achievements.map(
+                (achievement) => Padding(
+              padding: EdgeInsets.only(bottom: 8.h),
+              child: _AchievementTile(achievement: achievement),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementTile extends StatelessWidget {
+  final RecitationAchievement achievement;
+
+  const _AchievementTile({
+    required this.achievement,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _InnerDarkCard(
+      padding: EdgeInsets.all(10.w),
+      borderColor: achievement.earned
+          ? const Color(0xffffb300).withOpacity(0.75)
+          : Colors.white.withOpacity(0.10),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          CircleAvatar(
+            radius: 18.r,
+            backgroundColor: achievement.earned
+                ? const Color(0xffffb300)
+                : Colors.white.withOpacity(0.12),
+            child: Icon(
+              achievement.earned ? Icons.check_rounded : achievement.icon,
+              color: Colors.white,
+              size: 18.sp,
+            ),
+          ),
+          SizedBox(width: 9.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  achievement.title,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: Colors.white
+),
+                ),
+                SizedBox(height: 3.h),
+                Text(
+                  achievement.description,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w500,
+                    color: Colors.white.withOpacity(0.62),
+                    height: 1.35
+),
+                ),
+                SizedBox(height: 7.h),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10.r),
+                  child: LinearProgressIndicator(
+                    value: achievement.progress,
+                    minHeight: 4.h,
+                    backgroundColor: Colors.white.withOpacity(0.18),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      achievement.earned
+                          ? const Color(0xffffb300)
+                          : const Color(0xff21C58E),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MainTrackingCard extends StatelessWidget {
+  final Widget child;
+
+  const _MainTrackingCard({
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary,
+        borderRadius: BorderRadius.circular(16.r),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _InnerDarkCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry? padding;
+  final Color? borderColor;
+
+  const _InnerDarkCard({
+    required this.child,
+    this.padding,
+    this.borderColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: padding ??
+          EdgeInsets.symmetric(
+            horizontal: 12.w,
+            vertical: 10.h,
+          ),
+      decoration: BoxDecoration(
+        color: const Color(0xff171B26),
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(
+          color: borderColor ?? Colors.white.withOpacity(0.12),
+          width: 0.8.w,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String title;
+  final IconData icon;
+
+  const _SectionTitle({
+    required this.title,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _InnerDarkCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: 12.w,
+        vertical: 8.h,
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Icon(
+            icon,
+            color: const Color(0xff21C58E),
+            size: 18.sp,
+          ),
+          SizedBox(width: 8.w),
+          Expanded(
+            child: Text(
+              title,
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+                color: Colors.white
+),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniStatCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+
+  const _MiniStatCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+  });
+
+  String _shortTitle(String title) {
+    switch (title) {
+      case 'استماع اليوم':
+        return 'اليوم';
+      case 'إجمالي الاستماع':
+        return 'الإجمالي';
+      case 'نسبة الهدف':
+        return 'الهدف';
+      case 'حالة اليوم':
+        return 'الحالة';
+      case 'أهداف مكتملة':
+        return 'الأهداف';
+      case 'أسبوعك الحالي':
+        return 'الأسبوع';
+      case 'استماع الشهر':
+        return 'الشهر';
+      case 'أهداف الشهر':
+        return 'أهداف الشهر';
+      case 'سور مختلفة':
+        return 'السور';
+      case 'قراء مختلفون':
+        return 'القراء';
+      default:
+        return title;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _InnerDarkCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: 9.w,
+        vertical: 9.h,
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          CircleAvatar(
+            radius: 15.r,
+            backgroundColor: Colors.white.withOpacity(0.12),
+            child: Icon(
+              icon,
+              color: const Color(0xff21C58E),
+              size: 16.sp,
+            ),
+          ),
+          SizedBox(width: 7.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _shortTitle(title),
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                    color: Colors.white.withOpacity(0.62)
+),
+                ),
+                SizedBox(height: 3.h),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    value,
+                    textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                      color: Colors.white
+),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnalysisRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String value;
+  final String subtitle;
+
+  const _AnalysisRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _InnerDarkCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: 10.w,
+        vertical: 9.h,
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          CircleAvatar(
+            radius: 17.r,
+            backgroundColor: Colors.white.withOpacity(0.12),
+            child: Icon(
+              icon,
+              color: const Color(0xff21C58E),
+              size: 18.sp,
+            ),
+          ),
+          SizedBox(width: 9.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  title,
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w500,
+                    color: Colors.white.withOpacity(0.62)
+),
+                ),
+                SizedBox(height: 3.h),
+                Text(
+                  value,
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: Colors.white
+),
+                ),
+                SizedBox(height: 2.h),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w500,
+                    color: Colors.white.withOpacity(0.52)
+),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SmallActionButton extends StatelessWidget {
+  final String text;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _SmallActionButton({
+    required this.text,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(14.r),
+      child: InkWell(
+        onTap: () {
+          AppHaptics.tap(context);
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(14.r),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: 8.w,
+            vertical: 5.h,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color: Colors.white,
+                size: 14.sp,
+              ),
+              SizedBox(width: 4.w),
+              Text(
+                text,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                  color: Colors.white
+),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MotivationCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return _InnerDarkCard(
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'استماع قصير يوميًا أفضل من انقطاع طويل. اجعل لك وردًا ثابتًا ولو دقائق قليلة.',
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                color: Colors.white.withOpacity(0.80),
+                height: 1.35
+),
+            ),
+          ),
+          SizedBox(width: 10.w),
+          Icon(
+            Icons.favorite_rounded,
+            color: const Color(0xff21C58E),
+            size: 18.sp,
+          ),
+        ],
+      ),
+    );
+  }
+}

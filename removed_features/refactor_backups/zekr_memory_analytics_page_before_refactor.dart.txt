@@ -1,0 +1,1864 @@
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/shared/widgets/app_main_components/custom_app_bar.dart';
+
+import 'package:islamic_app/features/azkar/data/models/zekr_memory_attempt_model.dart';
+import 'package:islamic_app/features/azkar/data/models/zekr_memory_item_state_model.dart';
+import 'package:islamic_app/features/azkar/data/services/zekr_memory_progress_service.dart';
+import 'zekr_today_review_page.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+bool _analyticsLargeScreen(BuildContext context) {
+  final Size size = MediaQuery.sizeOf(context);
+  return size.shortestSide >= 600 || (size.width >= 700 && size.height >= 500);
+}
+
+class _AnalyticsMetrics {
+  const _AnalyticsMetrics({
+    required this.large,
+    required this.pageHorizontalPadding,
+    required this.pageTopPadding,
+    required this.pageBottomPadding,
+    required this.gap,
+    required this.cardPadding,
+    required this.cardRadius,
+    required this.headerIconBox,
+    required this.headerIconSize,
+    required this.headerTitleSize,
+    required this.headerSubtitleSize,
+    required this.bodyTextSize,
+    required this.smallTextSize,
+    required this.chartHeight,
+    required this.statCardHeight,
+    required this.statValueSize,
+    required this.statTitleSize,
+    required this.tilePadding,
+    required this.tileRadius,
+    required this.tileIconBox,
+    required this.tileTitleSize,
+    required this.tileSubtitleSize,
+  });
+
+  final bool large;
+  final double pageHorizontalPadding;
+  final double pageTopPadding;
+  final double pageBottomPadding;
+  final double gap;
+  final double cardPadding;
+  final double cardRadius;
+  final double headerIconBox;
+  final double headerIconSize;
+  final double headerTitleSize;
+  final double headerSubtitleSize;
+  final double bodyTextSize;
+  final double smallTextSize;
+  final double chartHeight;
+  final double statCardHeight;
+  final double statValueSize;
+  final double statTitleSize;
+  final double tilePadding;
+  final double tileRadius;
+  final double tileIconBox;
+  final double tileTitleSize;
+  final double tileSubtitleSize;
+
+  static _AnalyticsMetrics of(BuildContext context) {
+    final bool large = _analyticsLargeScreen(context);
+    final Size size = MediaQuery.sizeOf(context);
+    final bool compactLarge = large && size.width < 900;
+
+    if (large) {
+      return _AnalyticsMetrics(
+        large: true,
+        pageHorizontalPadding: compactLarge ? 20 : 28,
+        pageTopPadding: compactLarge ? 12 : 14,
+        pageBottomPadding: 30,
+        gap: compactLarge ? 12 : 16,
+        cardPadding: compactLarge ? 14 : 16,
+        cardRadius: 22,
+        headerIconBox: compactLarge ? 40 : 42,
+        headerIconSize: compactLarge ? 20 : 22,
+        headerTitleSize: compactLarge ? 14 : 15,
+        headerSubtitleSize: compactLarge ? 10 : 10.5,
+        bodyTextSize: compactLarge ? 11.5 : 12,
+        smallTextSize: compactLarge ? 9.5 : 10,
+        chartHeight: compactLarge ? 170 : 185,
+        statCardHeight: compactLarge ? 82 : 88,
+        statValueSize: compactLarge ? 19 : 21,
+        statTitleSize: compactLarge ? 10 : 10.5,
+        tilePadding: compactLarge ? 10 : 11,
+        tileRadius: 16,
+        tileIconBox: compactLarge ? 36 : 38,
+        tileTitleSize: compactLarge ? 11 : 11.5,
+        tileSubtitleSize: compactLarge ? 9 : 9.5,
+      );
+    }
+
+    return _AnalyticsMetrics(
+      large: false,
+      pageHorizontalPadding: 14.w,
+      pageTopPadding: 8.h,
+      pageBottomPadding: 18.h,
+      gap: 12.h,
+      cardPadding: 14.w,
+      cardRadius: 20.r,
+      headerIconBox: 40.w,
+      headerIconSize: 21.sp,
+      headerTitleSize: 14.sp,
+      headerSubtitleSize: 10.sp,
+      bodyTextSize: 11.sp,
+      smallTextSize: 9.sp,
+      chartHeight: 170.h,
+      statCardHeight: 90.h,
+      statValueSize: 17.sp,
+      statTitleSize: 9.sp,
+      tilePadding: 10.w,
+      tileRadius: 14.r,
+      tileIconBox: 38.w,
+      tileTitleSize: 11.sp,
+      tileSubtitleSize: 9.sp,
+    );
+  }
+}
+
+class ZekrMemoryAnalyticsPage extends StatefulWidget {
+  const ZekrMemoryAnalyticsPage({super.key});
+
+  @override
+  State<ZekrMemoryAnalyticsPage> createState() =>
+      _ZekrMemoryAnalyticsPageState();
+}
+
+class _ZekrMemoryAnalyticsPageState extends State<ZekrMemoryAnalyticsPage> {
+  final ZekrMemoryProgressService _service = const ZekrMemoryProgressService();
+  late Future<ZekrMemoryDashboardStats> _statsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _statsFuture = _service.getDashboardStats();
+  }
+
+  Future<void> _rebuildAnalysis() async {
+    await _service.rebuildStatesFromAttempts();
+    if (!mounted) return;
+
+    setState(() {
+      _statsFuture = _service.getDashboardStats();
+    });
+  }
+
+  Future<void> _resetAnalysis() async {
+    final shouldReset = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: theme.colorScheme.secondary,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20.r),
+            ),
+            title: Text(
+              'إعادة ضبط خطة الحفظ؟',
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.body(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface
+),
+            ),
+            content: Text(
+              'سيتم حذف محاولات الحفظ والتحليل ومواعيد المراجعة. لن يتم حذف الأذكار نفسها.',
+              textAlign: TextAlign.right,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w500,
+                color: theme.colorScheme.surface.withOpacity(0.70),
+                height: 1.6
+),
+            ),
+            actionsAlignment: MainAxisAlignment.start,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                ),
+                child: const Text('إعادة الضبط'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (shouldReset != true) return;
+
+    await _service.clearAll();
+
+    if (!mounted) return;
+
+    setState(() {
+      _statsFuture = _service.getDashboardStats();
+    });
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        margin: EdgeInsets.only(
+          left: 24.w,
+          right: 24.w,
+          bottom: 18.h,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        content: Text(
+          'تمت إعادة ضبط خطة الحفظ',
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.rtl,
+          style: AppTextStyles.caption(context).copyWith(
+color: Colors.white,
+            fontWeight: FontWeight.w600
+),
+        ),
+      ),
+    );
+  }
+
+  void _openTodayReview() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ZekrTodayReviewPage(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool large = _analyticsLargeScreen(context);
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      appBar: const CustomAppBar(
+        category: CustomAppBarCategory(text: 'تحليل الحفظ'),
+      ),
+      body: SafeArea(
+        child: FutureBuilder<ZekrMemoryDashboardStats>(
+          future: _statsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            final stats = snapshot.data ?? ZekrMemoryDashboardStats.empty();
+
+            return RefreshIndicator(
+              onRefresh: _rebuildAnalysis,
+              child: large
+                  ? _LargeAnalyticsBody(
+                stats: stats,
+                onOpenTodayReview: _openTodayReview,
+                onRebuildAnalysis: _rebuildAnalysis,
+                onResetAnalysis: _resetAnalysis,
+              )
+                  : _PhoneAnalyticsBody(
+                stats: stats,
+                onOpenTodayReview: _openTodayReview,
+                onRebuildAnalysis: _rebuildAnalysis,
+                onResetAnalysis: _resetAnalysis,
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _PhoneAnalyticsBody extends StatelessWidget {
+  const _PhoneAnalyticsBody({
+    required this.stats,
+    required this.onOpenTodayReview,
+    required this.onRebuildAnalysis,
+    required this.onResetAnalysis,
+  });
+
+  final ZekrMemoryDashboardStats stats;
+  final VoidCallback onOpenTodayReview;
+  final Future<void> Function() onRebuildAnalysis;
+  final VoidCallback onResetAnalysis;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        m.pageHorizontalPadding,
+        m.pageTopPadding,
+        m.pageHorizontalPadding,
+        m.pageBottomPadding,
+      ),
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      children: [
+        _OverviewCard(stats: stats),
+        SizedBox(height: m.gap),
+        _StatsGrid(stats: stats),
+        SizedBox(height: m.gap),
+        _SmartPlanCard(stats: stats),
+        SizedBox(height: m.gap),
+        _MonthlyAttemptsChart(stats: stats),
+        SizedBox(height: m.gap),
+        _MonthlyStrengthChart(stats: stats),
+        SizedBox(height: m.gap),
+        _CategoryAnalysisCard(stats: stats),
+        SizedBox(height: m.gap),
+        _MemoryItemsCard(
+          title: 'مراجعة اليوم',
+          subtitle: 'الأذكار التي حان وقت مراجعتها فقط حسب خطة الحفظ المتباعد.',
+          emptyText:
+          'لا توجد مراجعات مستحقة اليوم. راجع تقويم المراجعة لمعرفة الأيام القادمة.',
+          items: stats.dueReviews,
+          icon: Icons.today_rounded,
+          color: Theme.of(context).colorScheme.primary,
+          actionText: stats.dueReviews.isEmpty ? null : 'ابدأ مراجعة اليوم',
+          onActionTap: stats.dueReviews.isEmpty ? null : onOpenTodayReview,
+        ),
+        SizedBox(height: m.gap),
+        _MemoryItemsCard(
+          title: 'أضعف الأذكار',
+          subtitle: 'ابدأ بها في التدريب القادم لأنها تحتاج تثبيت أكثر.',
+          emptyText:
+          'ابدأ بتقييم بعض الأذكار من درّبني على الحفظ، وبعدها هتظهر الأذكار التي تحتاج تثبيت.',
+          items: stats.weakestItems,
+          icon: Icons.warning_amber_rounded,
+          color: const Color(0xffF59E0B),
+        ),
+        SizedBox(height: m.gap),
+        _MemoryItemsCard(
+          title: 'أقوى الأذكار',
+          subtitle: 'أذكار ثابتة عندك، حافظ عليها بالمراجعة المتباعدة.',
+          emptyText:
+          'اختار تمام بعد التدريب أكثر من مرة، وبعدها هتظهر هنا الأذكار الثابتة.',
+          items: stats.strongestItems,
+          icon: Icons.verified_rounded,
+          color: const Color(0xff21C58E),
+        ),
+        SizedBox(height: m.gap),
+        _RecentAttemptsCard(attempts: stats.recentAttempts),
+        SizedBox(height: m.gap),
+        _ActionButtonsRow(
+          onRebuildAnalysis: onRebuildAnalysis,
+          onResetAnalysis: onResetAnalysis,
+        ),
+      ],
+    );
+  }
+}
+
+class _LargeAnalyticsBody extends StatelessWidget {
+  const _LargeAnalyticsBody({
+    required this.stats,
+    required this.onOpenTodayReview,
+    required this.onRebuildAnalysis,
+    required this.onResetAnalysis,
+  });
+
+  final ZekrMemoryDashboardStats stats;
+  final VoidCallback onOpenTodayReview;
+  final Future<void> Function() onRebuildAnalysis;
+  final VoidCallback onResetAnalysis;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        m.pageHorizontalPadding,
+        m.pageTopPadding,
+        m.pageHorizontalPadding,
+        m.pageBottomPadding,
+      ),
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      children: [
+        _OverviewCard(stats: stats),
+        SizedBox(height: m.gap),
+
+        // 4 كروت جنب بعض
+        _StatsGrid(stats: stats),
+        SizedBox(height: m.gap),
+
+        // كارت الخطة المقترحة
+        _SmartPlanCard(stats: stats),
+        SizedBox(height: m.gap),
+
+        // كارتين الشارت جنب بعض
+        _ResponsiveTwoColumn(
+          first: _MonthlyAttemptsChart(stats: stats),
+          second: _MonthlyStrengthChart(stats: stats),
+        ),
+        SizedBox(height: m.gap),
+
+        // باقي الكروت بنفس النظام
+        _CategoryAnalysisCard(stats: stats),
+        SizedBox(height: m.gap),
+
+        _MemoryItemsCard(
+          title: 'مراجعة اليوم',
+          subtitle: 'الأذكار التي حان وقت مراجعتها فقط حسب خطة الحفظ المتباعد.',
+          emptyText:
+          'لا توجد مراجعات مستحقة اليوم. راجع تقويم المراجعة لمعرفة الأيام القادمة.',
+          items: stats.dueReviews,
+          icon: Icons.today_rounded,
+          color: Theme.of(context).colorScheme.primary,
+          actionText: stats.dueReviews.isEmpty ? null : 'ابدأ مراجعة اليوم',
+          onActionTap: stats.dueReviews.isEmpty ? null : onOpenTodayReview,
+        ),
+        SizedBox(height: m.gap),
+
+        _ResponsiveTwoColumn(
+          first: _MemoryItemsCard(
+            title: 'أضعف الأذكار',
+            subtitle: 'ابدأ بها في التدريب القادم لأنها تحتاج تثبيت أكثر.',
+            emptyText:
+            'ابدأ بتقييم بعض الأذكار من درّبني على الحفظ، وبعدها هتظهر الأذكار التي تحتاج تثبيت.',
+            items: stats.weakestItems,
+            icon: Icons.warning_amber_rounded,
+            color: const Color(0xffF59E0B),
+          ),
+          second: _MemoryItemsCard(
+            title: 'أقوى الأذكار',
+            subtitle: 'أذكار ثابتة عندك، حافظ عليها بالمراجعة المتباعدة.',
+            emptyText:
+            'اختار تمام بعد التدريب أكثر من مرة، وبعدها هتظهر هنا الأذكار الثابتة.',
+            items: stats.strongestItems,
+            icon: Icons.verified_rounded,
+            color: const Color(0xff21C58E),
+          ),
+        ),
+        SizedBox(height: m.gap),
+
+        _RecentAttemptsCard(attempts: stats.recentAttempts),
+        SizedBox(height: m.gap),
+
+        _ActionButtonsRow(
+          onRebuildAnalysis: onRebuildAnalysis,
+          onResetAnalysis: onResetAnalysis,
+        ),
+      ],
+    );
+  }
+}
+
+class _ResponsiveTwoColumn extends StatelessWidget {
+  const _ResponsiveTwoColumn({
+    required this.first,
+    required this.second,
+  });
+
+  final Widget first;
+  final Widget second;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 720) {
+          return Column(
+            children: [
+              first,
+              SizedBox(height: m.gap),
+              second,
+            ],
+          );
+        }
+
+        return IntrinsicHeight(
+          child: Row(
+            textDirection: TextDirection.rtl,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SizedBox.expand(
+                  child: first,
+                ),
+              ),
+              SizedBox(width: m.gap),
+              Expanded(
+                child: SizedBox.expand(
+                  child: second,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _OverviewCard extends StatelessWidget {
+  const _OverviewCard({required this.stats});
+
+  final ZekrMemoryDashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+    final progress = (stats.averageStrength / 100).clamp(0.0, 1.0);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(m.large ? 18 : 15.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary,
+        borderRadius: BorderRadius.circular(m.large ? 24 : 22.r),
+        boxShadow: [
+          BoxShadow(
+            color: theme.colorScheme.primary.withOpacity(0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _WhiteHeaderRow(
+              icon: Icons.insights_rounded,
+              title: 'قوة الحفظ العامة',
+              subtitle: stats.smartMessage,
+            ),
+            SizedBox(height: m.large ? 16 : 14.h),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(100),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: m.large ? 8 : 9.h,
+                backgroundColor: Colors.white.withOpacity(0.18),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+            SizedBox(height: m.large ? 10 : 9.h),
+            Row(
+              textDirection: TextDirection.rtl,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${stats.averageStrength.toStringAsFixed(0)}%',
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  style: AppTextStyles.display(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 0,
+                    height: 1.05
+),
+                ),
+                SizedBox(width: m.large ? 14 : 12.w),
+                Expanded(
+                  child: Text(
+                    'نشاط الشهر: ${stats.activeDaysThisMonth} أيام • ${stats.totalAttemptsThisMonth} محاولة',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    softWrap: true,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                      color: Colors.white.withOpacity(0.82),
+                      height: 1.45,
+                      letterSpacing: 0
+),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatsGrid extends StatelessWidget {
+  const _StatsGrid({required this.stats});
+
+  final ZekrMemoryDashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+
+    final cards = <Widget>[
+      _MiniStatCard(
+        title: 'مراجعة اليوم',
+        value: '${stats.dueReviewItems}',
+        icon: Icons.today_rounded,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+      _MiniStatCard(
+        title: 'محفوظ بثبات',
+        value: '${stats.strongItems}',
+        icon: Icons.verified_rounded,
+        color: const Color(0xff21C58E),
+      ),
+      _MiniStatCard(
+        title: 'قيد التثبيت',
+        value: '${stats.stabilizingItems}',
+        icon: Icons.adjust_rounded,
+        color: const Color(0xffF59E0B),
+      ),
+      _MiniStatCard(
+        title: 'يحتاج مراجعة',
+        value: '${stats.needsReviewItems}',
+        icon: Icons.refresh_rounded,
+        color: const Color(0xffEF4444),
+      ),
+    ];
+
+    if (m.large) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 720) {
+            return Column(
+              children: [
+                IntrinsicHeight(
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: SizedBox.expand(child: cards[0])),
+                      SizedBox(width: m.gap),
+                      Expanded(child: SizedBox.expand(child: cards[1])),
+                    ],
+                  ),
+                ),
+                SizedBox(height: m.gap),
+                IntrinsicHeight(
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: SizedBox.expand(child: cards[2])),
+                      SizedBox(width: m.gap),
+                      Expanded(child: SizedBox.expand(child: cards[3])),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return IntrinsicHeight(
+            child: Row(
+              textDirection: TextDirection.rtl,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (int i = 0; i < cards.length; i++) ...[
+                  Expanded(
+                    child: SizedBox.expand(
+                      child: cards[i],
+                    ),
+                  ),
+                  if (i != cards.length - 1) SizedBox(width: m.gap),
+                ],
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    return Column(
+      children: [
+        Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Expanded(child: cards[0]),
+            SizedBox(width: 8.w),
+            Expanded(child: cards[1]),
+          ],
+        ),
+        SizedBox(height: 8.h),
+        Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Expanded(child: cards[2]),
+            SizedBox(width: 8.w),
+            Expanded(child: cards[3]),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _MiniStatCard extends StatelessWidget {
+  const _MiniStatCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      constraints: BoxConstraints(minHeight: m.statCardHeight),
+      padding: EdgeInsets.symmetric(
+        horizontal: m.large ? 10 : 10.w,
+        vertical: m.large ? 10 : 9.h,
+      ),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(m.large ? 18 : 18.r),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.30),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(
+              theme.brightness == Brightness.dark ? 0.10 : 0.025,
+            ),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: color,
+              size: m.large ? 22 : 20.sp,
+            ),
+            SizedBox(height: m.large ? 5 : 6.h),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                style: TextStyle(
+                  fontFamily: 'cairo',
+                  fontSize: m.statValueSize,
+                  fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface,
+                  height: 1.05,
+                ),
+              ),
+            ),
+            SizedBox(height: m.large ? 3 : 3.h),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textDirection: TextDirection.rtl,
+              locale: const Locale('ar'),
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: m.statTitleSize,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.surface.withOpacity(0.62),
+                height: 1.25,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SmartPlanCard extends StatelessWidget {
+  const _SmartPlanCard({required this.stats});
+
+  final ZekrMemoryDashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return _AnalyticsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _HeaderRow(
+            icon: Icons.lightbulb_outline_rounded,
+            color: theme.colorScheme.primary,
+            title: 'الخطة المقترحة',
+            subtitle: 'اقتراح مبني على المراجعات المستحقة وأضعف الأذكار.',
+          ),
+          SizedBox(height: m.large ? 10 : 10.h),
+          _ArabicText(
+            stats.recommendedAction,
+            fontSize: m.bodyTextSize,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.surface.withOpacity(0.72),
+            height: 1.65,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MonthlyAttemptsChart extends StatelessWidget {
+  const _MonthlyAttemptsChart({required this.stats});
+
+  final ZekrMemoryDashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+    final points = stats.monthlyPoints;
+
+    return _ChartShell(
+      title: 'محاولات الحفظ خلال 30 يوم',
+      subtitle: 'كل عمود يمثل عدد تقييمات الحفظ في يوم.',
+      child: points.isEmpty
+          ? const _EmptyChartText()
+          : SizedBox(
+        height: m.chartHeight,
+        child: BarChart(
+          BarChartData(
+            maxY: stats.maxMonthlyAttempts,
+            borderData: FlBorderData(show: false),
+            gridData: FlGridData(
+              show: true,
+              drawVerticalLine: false,
+              getDrawingHorizontalLine: (_) => FlLine(
+                color: theme.colorScheme.outline.withOpacity(0.14),
+                strokeWidth: 1,
+              ),
+            ),
+            titlesData: FlTitlesData(
+              leftTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              rightTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              topTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              bottomTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  reservedSize: m.large ? 22 : 24.h,
+                  interval: 5,
+                  getTitlesWidget: (value, meta) {
+                    final index = value.toInt();
+                    if (index < 0 || index >= points.length) {
+                      return const SizedBox.shrink();
+                    }
+                    if (index % 5 != 0 &&
+                        index != points.length - 1) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return Text(
+                      points[index].dayLabel,
+                      style: AppTextStyles.caption(context).copyWith(
+color: theme.colorScheme.surface.withOpacity(0.55)
+),
+                    );
+                  },
+                ),
+              ),
+            ),
+            barGroups: List.generate(points.length, (index) {
+              return BarChartGroupData(
+                x: index,
+                barRods: [
+                  BarChartRodData(
+                    toY: points[index].attemptsCount.toDouble(),
+                    width: m.large ? 5 : 6.w,
+                    color: theme.colorScheme.primary,
+                    borderRadius: BorderRadius.circular(100),
+                  ),
+                ],
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthlyStrengthChart extends StatelessWidget {
+  const _MonthlyStrengthChart({required this.stats});
+
+  final ZekrMemoryDashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+    final points = stats.monthlyPoints;
+
+    return _ChartShell(
+      title: 'متوسط جودة الحفظ الشهري',
+      subtitle: 'الخط مبني على تقييماتك اليومية بعد القراءة أو التدريب أو الاختبار.',
+      child: points.isEmpty
+          ? const _EmptyChartText()
+          : SizedBox(
+        height: m.chartHeight,
+        child: LineChart(
+          LineChartData(
+            minY: 0,
+            maxY: 100,
+            borderData: FlBorderData(show: false),
+            gridData: FlGridData(
+              show: true,
+              drawVerticalLine: false,
+              getDrawingHorizontalLine: (_) => FlLine(
+                color: theme.colorScheme.outline.withOpacity(0.14),
+                strokeWidth: 1,
+              ),
+            ),
+            titlesData: FlTitlesData(
+              leftTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              rightTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              topTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: false),
+              ),
+              bottomTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  reservedSize: m.large ? 22 : 24.h,
+                  interval: 5,
+                  getTitlesWidget: (value, meta) {
+                    final index = value.toInt();
+                    if (index < 0 || index >= points.length) {
+                      return const SizedBox.shrink();
+                    }
+                    if (index % 5 != 0 &&
+                        index != points.length - 1) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return Text(
+                      points[index].dayLabel,
+                      style: AppTextStyles.caption(context).copyWith(
+color: theme.colorScheme.surface.withOpacity(0.55)
+),
+                    );
+                  },
+                ),
+              ),
+            ),
+            lineBarsData: [
+              LineChartBarData(
+                isCurved: true,
+                barWidth: m.large ? 2.5 : 3,
+                color: theme.colorScheme.primary,
+                dotData: FlDotData(show: false),
+                belowBarData: BarAreaData(
+                  show: true,
+                  color: theme.colorScheme.primary.withOpacity(0.10),
+                ),
+                spots: List.generate(points.length, (index) {
+                  final value = points[index].averageRatingScore;
+                  return FlSpot(
+                    index.toDouble(),
+                    value <= 0 ? 0 : value,
+                  );
+                }),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChartShell extends StatelessWidget {
+  const _ChartShell({
+    required this.title,
+    required this.subtitle,
+    required this.child,
+  });
+
+  final String title;
+  final String subtitle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return _AnalyticsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _ArabicText(
+            title,
+            fontSize: m.headerTitleSize,
+            fontWeight: FontWeight.w900,
+            color: theme.colorScheme.surface,
+          ),
+          SizedBox(height: m.large ? 3 : 3.h),
+          _ArabicText(
+            subtitle,
+            fontSize: m.headerSubtitleSize,
+            fontWeight: FontWeight.w500,
+            color: theme.colorScheme.surface.withOpacity(0.62),
+            height: 1.5,
+          ),
+          SizedBox(height: m.large ? 12 : 14.h),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyChartText extends StatelessWidget {
+  const _EmptyChartText();
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: m.large ? 24 : 22.h),
+      child: _ArabicText(
+        'لسه مفيش بيانات كافية للشارت.',
+        textAlign: TextAlign.center,
+        fontSize: m.bodyTextSize,
+        fontWeight: FontWeight.w600,
+        color: theme.colorScheme.surface.withOpacity(0.60),
+      ),
+    );
+  }
+}
+
+class _CategoryAnalysisCard extends StatelessWidget {
+  const _CategoryAnalysisCard({required this.stats});
+
+  final ZekrMemoryDashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return _AnalyticsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _HeaderRow(
+            icon: Icons.category_outlined,
+            color: theme.colorScheme.primary,
+            title: 'تحليل حسب الأقسام',
+            subtitle: 'يعرض متوسط قوة الحفظ لكل قسم وعدد المراجعات المستحقة.',
+          ),
+          SizedBox(height: m.large ? 11 : 10.h),
+          if (stats.categoryStats.isEmpty)
+            _ArabicText(
+              'لسه مفيش بيانات أقسام.',
+              fontSize: m.bodyTextSize,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.surface.withOpacity(0.62),
+            )
+          else
+            ...stats.categoryStats.map(
+                  (item) => Padding(
+                padding: EdgeInsets.only(bottom: m.large ? 9 : 9.h),
+                child: _CategoryProgressLine(item: item),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryProgressLine extends StatelessWidget {
+  const _CategoryProgressLine({required this.item});
+
+  final ZekrCategoryMemoryStats item;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+    final value = (item.averageStrength / 100).clamp(0.0, 1.0);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(m.large ? 10 : 10.w),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withOpacity(0.045),
+          borderRadius: BorderRadius.circular(m.large ? 14 : 14.r),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Row(
+              textDirection: TextDirection.rtl,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: _ArabicText(
+                    item.categoryTitle,
+                    fontSize: m.tileTitleSize,
+                    fontWeight: FontWeight.w800,
+                    color: theme.colorScheme.surface,
+                    maxLines: 1,
+                  ),
+                ),
+                SizedBox(width: m.large ? 8 : 8.w),
+                Text(
+                  '${item.averageStrength.toStringAsFixed(0)}%',
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(
+                    fontFamily: 'cairo',
+                    fontSize: m.bodyTextSize,
+                    fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: m.large ? 6 : 5.h),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(100),
+              child: LinearProgressIndicator(
+                value: value,
+                minHeight: m.large ? 6 : 6.h,
+                backgroundColor: theme.colorScheme.outline.withOpacity(0.18),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  theme.colorScheme.primary,
+                ),
+              ),
+            ),
+            if (item.dueCount > 0) ...[
+              SizedBox(height: m.large ? 5 : 3.h),
+              _ArabicText(
+                '${item.dueCount} مراجعة مستحقة',
+                fontSize: m.smallTextSize,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.primary,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MemoryItemsCard extends StatelessWidget {
+  const _MemoryItemsCard({
+    required this.title,
+    required this.subtitle,
+    required this.emptyText,
+    required this.items,
+    required this.icon,
+    required this.color,
+    this.actionText,
+    this.onActionTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final String emptyText;
+  final List<ZekrMemoryItemStateModel> items;
+  final IconData icon;
+  final Color color;
+  final String? actionText;
+  final VoidCallback? onActionTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return _AnalyticsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _HeaderRow(
+            icon: icon,
+            color: color,
+            title: title,
+            subtitle: subtitle,
+          ),
+          if (actionText != null && onActionTap != null) ...[
+            SizedBox(height: m.large ? 10 : 10.h),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: onActionTap,
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: color,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                    vertical: m.large ? 11 : 10.h,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(m.large ? 14 : 14.r),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: TextDirection.rtl,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.play_arrow_rounded,
+                      size: m.large ? 18 : 18.sp,
+                    ),
+                    SizedBox(width: m.large ? 6 : 6.w),
+                    Text(
+                      actionText!,
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.rtl,
+                      style: TextStyle(
+                        fontFamily: 'cairo',
+                        fontSize: m.bodyTextSize,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          SizedBox(height: m.large ? 11 : 10.h),
+          if (items.isEmpty)
+            _ArabicText(
+              emptyText,
+              fontSize: m.bodyTextSize,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.surface.withOpacity(0.62),
+              height: 1.55,
+            )
+          else
+            ...items.map(
+                  (item) => Padding(
+                padding: EdgeInsets.only(bottom: m.large ? 8 : 8.h),
+                child: _MemoryStateTile(item: item, color: color),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MemoryStateTile extends StatelessWidget {
+  const _MemoryStateTile({required this.item, required this.color});
+
+  final ZekrMemoryItemStateModel item;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(m.tilePadding),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(m.tileRadius),
+        border: Border.all(
+          color: color.withOpacity(0.10),
+        ),
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: m.tileIconBox,
+              height: m.tileIconBox,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(m.large ? 13 : 13.r),
+              ),
+              child: Text(
+                item.memoryStrength.toStringAsFixed(0),
+                textDirection: TextDirection.rtl,
+                style: TextStyle(
+                  fontFamily: 'cairo',
+                  fontSize: m.smallTextSize,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                ),
+              ),
+            ),
+            SizedBox(width: m.large ? 9 : 8.w),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _ArabicText(
+                    item.itemTitle,
+                    fontSize: m.tileTitleSize,
+                    fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface,
+                    maxLines: 2,
+                  ),
+                  SizedBox(height: m.large ? 3 : 2.h),
+                  _ArabicText(
+                    '${item.categoryTitle} • ${item.level.label} • المراجعة: ${item.reviewDateText}',
+                    fontSize: m.tileSubtitleSize,
+                    fontWeight: FontWeight.w500,
+                    color: theme.colorScheme.surface.withOpacity(0.62),
+                    height: 1.45,
+                    maxLines: 2,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentAttemptsCard extends StatelessWidget {
+  const _RecentAttemptsCard({required this.attempts});
+
+  final List<ZekrMemoryAttemptModel> attempts;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return _AnalyticsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _HeaderRow(
+            icon: Icons.history_rounded,
+            color: theme.colorScheme.primary,
+            title: 'آخر محاولات الحفظ',
+            subtitle: 'آخر التقييمات التي سجّلتها بعد القراءة أو التدريب أو الاختبار.',
+          ),
+          SizedBox(height: m.large ? 11 : 10.h),
+          if (attempts.isEmpty)
+            _ArabicText(
+              'لسه مفيش محاولات حفظ مسجلة.',
+              fontSize: m.bodyTextSize,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.surface.withOpacity(0.62),
+            )
+          else
+            ...attempts.map(
+                  (attempt) => Padding(
+                padding: EdgeInsets.only(bottom: m.large ? 8 : 8.h),
+                child: _AttemptTile(attempt: attempt),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttemptTile extends StatelessWidget {
+  const _AttemptTile({required this.attempt});
+
+  final ZekrMemoryAttemptModel attempt;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+    final color = attempt.rating == ZekrMemoryRating.mastered
+        ? const Color(0xff21C58E)
+        : attempt.rating == ZekrMemoryRating.partial
+        ? const Color(0xffF59E0B)
+        : const Color(0xffEF4444);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(m.tilePadding),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(m.tileRadius),
+        border: Border.all(
+          color: color.withOpacity(0.10),
+        ),
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: m.tileIconBox,
+              height: m.tileIconBox,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(m.large ? 13 : 12.r),
+              ),
+              child: Icon(
+                Icons.analytics_outlined,
+                color: color,
+                size: m.large ? 19 : 19.sp,
+              ),
+            ),
+            SizedBox(width: m.large ? 9 : 8.w),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _ArabicText(
+                    attempt.itemTitle,
+                    fontSize: m.tileTitleSize,
+                    fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface,
+                    maxLines: 2,
+                  ),
+                  SizedBox(height: m.large ? 3 : 2.h),
+                  _ArabicText(
+                    '${attempt.categoryTitle} • ${attempt.rating.label} • ${attempt.practiceMode.label}',
+                    fontSize: m.tileSubtitleSize,
+                    fontWeight: FontWeight.w500,
+                    color: theme.colorScheme.surface.withOpacity(0.62),
+                    height: 1.45,
+                    maxLines: 2,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionButtonsRow extends StatelessWidget {
+  const _ActionButtonsRow({
+    required this.onRebuildAnalysis,
+    required this.onResetAnalysis,
+  });
+
+  final Future<void> Function() onRebuildAnalysis;
+  final VoidCallback onResetAnalysis;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+
+    if (m.large) {
+      return Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Expanded(
+            child: _RebuildButton(onTap: onRebuildAnalysis),
+          ),
+          SizedBox(width: m.gap),
+          Expanded(
+            child: _ResetAnalysisButton(onTap: onResetAnalysis),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        _RebuildButton(onTap: onRebuildAnalysis),
+        SizedBox(height: 8.h),
+        _ResetAnalysisButton(onTap: onResetAnalysis),
+      ],
+    );
+  }
+}
+
+class _RebuildButton extends StatelessWidget {
+  const _RebuildButton({required this.onTap});
+
+  final Future<void> Function() onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton(
+          onPressed: onTap,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: theme.colorScheme.primary,
+            side: BorderSide(
+              color: theme.colorScheme.primary.withOpacity(0.35),
+            ),
+            padding: EdgeInsets.symmetric(
+              vertical: m.large ? 12 : 10.h,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(m.large ? 15 : 14.r),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            textDirection: TextDirection.rtl,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.refresh_rounded,
+                size: m.large ? 18 : 18.sp,
+              ),
+              SizedBox(width: m.large ? 7 : 6.w),
+              Flexible(
+                child: Text(
+                  'إعادة بناء التحليل من المحاولات السابقة',
+                  textAlign: TextAlign.center,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'cairo',
+                    fontSize: m.bodyTextSize,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ResetAnalysisButton extends StatelessWidget {
+  const _ResetAnalysisButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton(
+          onPressed: onTap,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: theme.colorScheme.primary,
+            side: BorderSide(
+              color: theme.colorScheme.primary.withOpacity(0.35),
+            ),
+            padding: EdgeInsets.symmetric(
+              vertical: m.large ? 12 : 10.h,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(m.large ? 15 : 14.r),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            textDirection: TextDirection.rtl,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.delete_sweep_rounded,
+                size: m.large ? 18 : 18.sp,
+              ),
+              SizedBox(width: m.large ? 7 : 6.w),
+              Flexible(
+                child: Text(
+                  'إعادة ضبط خطة الحفظ',
+                  textAlign: TextAlign.center,
+                  textDirection: TextDirection.rtl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'cairo',
+                    fontSize: m.bodyTextSize,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnalyticsCard extends StatelessWidget {
+  const _AnalyticsCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(m.cardPadding),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(m.cardRadius),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.28),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(
+              theme.brightness == Brightness.dark ? 0.10 : 0.025,
+            ),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: child,
+      ),
+    );
+  }
+}
+
+class _HeaderRow extends StatelessWidget {
+  const _HeaderRow({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+    final theme = Theme.of(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: m.headerIconBox,
+            height: m.headerIconBox,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(m.large ? 14 : 14.r),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: m.headerIconSize,
+            ),
+          ),
+          SizedBox(width: m.large ? 10 : 10.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _ArabicText(
+                  title,
+                  fontSize: m.headerTitleSize,
+                  fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface,
+                  maxLines: 1,
+                ),
+                SizedBox(height: m.large ? 3 : 3.h),
+                _ArabicText(
+                  subtitle,
+                  fontSize: m.headerSubtitleSize,
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.surface.withOpacity(0.62),
+                  height: 1.5,
+                  maxLines: 2,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WhiteHeaderRow extends StatelessWidget {
+  const _WhiteHeaderRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _AnalyticsMetrics.of(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: m.large ? 46 : 44.w,
+            height: m.large ? 46 : 44.w,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(m.large ? 15 : 15.r),
+            ),
+            child: Icon(
+              icon,
+              color: Colors.white,
+              size: m.large ? 24 : 24.sp,
+            ),
+          ),
+          SizedBox(width: m.large ? 11 : 10.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _ArabicText(
+                  title,
+                  fontSize: m.large ? 17 : 16.sp,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  maxLines: 1,
+                ),
+                SizedBox(height: m.large ? 4 : 3.h),
+                _ArabicText(
+                  subtitle,
+                  fontSize: m.large ? 12 : 11.sp,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withOpacity(0.80),
+                  height: 1.5,
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArabicText extends StatelessWidget {
+  const _ArabicText(
+      this.text, {
+        required this.fontSize,
+        required this.fontWeight,
+        required this.color,
+        this.height,
+        this.maxLines,
+        this.textAlign = TextAlign.right,
+      });
+
+  final String text;
+  final double fontSize;
+  final FontWeight fontWeight;
+  final Color color;
+  final double? height;
+  final int? maxLines;
+  final TextAlign textAlign;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: Text(
+        text,
+        textAlign: textAlign,
+        textDirection: TextDirection.rtl,
+        locale: const Locale('ar'),
+        softWrap: true,
+        maxLines: maxLines,
+        overflow: maxLines == null ? TextOverflow.visible : TextOverflow.ellipsis,
+        style: TextStyle(
+          fontFamily: 'cairo',
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          color: color,
+          height: height,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}

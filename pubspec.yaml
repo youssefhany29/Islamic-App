@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: '>=2.18.2 <3.0.0'
+  sdk: '>=3.10.0 <4.0.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -34,21 +34,40 @@ dependencies:
   hijri_calendar: ^1.0.7+7
   http: ^1.4.0
   cupertino_icons: ^1.0.8
-  geolocator: ^12.0.0
+  geolocator: ^14.0.2
   adhan: ^2.0.0
-  flutter_local_notifications: ^19.2.1
-  audioplayers: ^6.4.0
-  geocoding: ^2.0.5
-  permission_handler: ^10.4.0
+  flutter_local_notifications: ^19.5.0
+  audioplayers: ^6.7.1
+  geocoding: ^4.0.0
+  permission_handler: ^12.0.3
   provider: ^6.1.2
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.4
   flutter_native_splash: ^2.2.18 # Check for the latest version
-  lottie: ^1.3.0
-  shared_preferences: ^2.0.15
-  scrollable_positioned_list: ^0.2.3
-
-  share_plus: ^10.1.4
-  url_launcher: ^6.1.6
+  lottie: ^3.3.3
+  scrollable_positioned_list: ^0.3.8
+  shared_preferences: ^2.5.5
+  shared_preferences_android: ^2.4.23
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.6.0+eol
+  path: ^1.9.0
+  share_plus: ^13.1.0
+  url_launcher:
+  timezone: ^0.10.1
+  flutter_timezone: ^5.1.0
+  youtube_player_flutter: ^9.1.3
+  just_audio: ^0.10.5
+  audio_session: ^0.2.3
+  dio:
+  path_provider:
+  just_audio_background:
+  rxdart:
+  image_picker: ^1.1.2
+  fl_chart: ^1.2.0
+  youtube_player_iframe: ^6.0.2
+  webview_flutter: ^4.13.1
+  webview_flutter_android: ^4.13.0
+  flutter_compass: ^0.8.1
+  sqflite: ^2.3.3+1
 
 flutter_native_splash:
   color: "#fffffff" # Background color
@@ -67,13 +86,15 @@ flutter_launcher_icons:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  drift_dev: ^2.14.1
+  build_runner: ^2.4.7
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^2.0.3
+  flutter_lints: ^6.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -88,10 +109,89 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    - assets/
     - assets/icons/
     - assets/animation/
-    - assets/
-    - assets/quraan/
+    - assets/hafs_smart_v8.json
+    - assets/quran/create_khatma_header.png
+    - assets/quran/background.png
+    - assets/quran/book.png
+    - assets/quraan/quran_background.png
+    - assets/quraan/quran_ayah.png
+    - assets/quraan/ayah_night_mood.png
+    - assets/quraan/pray_light.png
+    - assets/quraan/pray_night.png
+    - assets/quraan/al-aqsa-mosque.png
+    - assets/quraan/memorization_hero.png
+    - assets/icons/plant.png
+
+    - assets/prayerTimeChangeable/
+
+    - assets/prayerTimeChangeable/default/asr/
+    - assets/prayerTimeChangeable/default/dhuhr/
+    - assets/prayerTimeChangeable/default/eid/
+    - assets/prayerTimeChangeable/default/fajr/
+    - assets/prayerTimeChangeable/default/isha/
+    - assets/prayerTimeChangeable/default/maghrib/
+    - assets/prayerTimeChangeable/default/ramadan/
+    - assets/prayerTimeChangeable/default/sunrise/
+
+    - assets/prayerTimeChangeable/default/eid/asr/
+    - assets/prayerTimeChangeable/default/eid/dhuhur/
+    - assets/prayerTimeChangeable/default/eid/fajr/
+    - assets/prayerTimeChangeable/default/eid/isha/
+    - assets/prayerTimeChangeable/default/eid/maghrib/
+    - assets/prayerTimeChangeable/default/eid/sunrise/
+
+    - assets/prayerTimeChangeable/default/ramadan/asr/
+    - assets/prayerTimeChangeable/default/ramadan/dhuhur/
+    - assets/prayerTimeChangeable/default/ramadan/fajr/
+    - assets/prayerTimeChangeable/default/ramadan/isha/
+    - assets/prayerTimeChangeable/default/ramadan/maghrib/
+    - assets/prayerTimeChangeable/default/ramadan/sunrise/
+
+    - assets/prayerTimeChangeable/egypt/asr/
+    - assets/prayerTimeChangeable/egypt/dhuhur/
+    - assets/prayerTimeChangeable/egypt/fajr/
+    - assets/prayerTimeChangeable/egypt/isha/
+    - assets/prayerTimeChangeable/egypt/maghrip/
+    - assets/prayerTimeChangeable/egypt/sunrise/
+
+    - assets/prayerTimeChangeable/syria/asr/
+    - assets/prayerTimeChangeable/syria/dhuhur/
+    - assets/prayerTimeChangeable/syria/fajr/
+    - assets/prayerTimeChangeable/syria/isha/
+    - assets/prayerTimeChangeable/syria/maghrib/
+    - assets/prayerTimeChangeable/syria/sunrise/
+
+    - assets/quraan/page_ayah_map.json
+
+    - assets/quran/qpc-v2.db
+    - assets/quran/qpc-v2-15-lines.db
+    - assets/quran/svg_pages_quran_only_webp/
+    - assets/quran/svg_geometry_quran_only/pages/
+    - assets/quran/svg_geometry_quran_only/page_metadata.json
+
+    - assets/fonts/surah-name-v2.ttf
+
+    - assets/moreIcons/
+
+    - assets/audio/prayer_notifications/
+    - assets/background/ramadan/
+    - assets/background/eid/
+
+    - assets/fonts/quran-common.ttf
+    - assets/fonts/QCF_SurahHeader_COLOR-Regular.ttf
+
+    - assets/quran/audio/ayah-recitation-alnufais.db
+    - assets/quran/audio/ayah-recitation-yasser-al-dosari-murattal-hafs-961.db
+    - assets/quran/audio/ayah-recitation-muhammad-siddiq-al-minshawi-murattal-hafs-959.db
+    - assets/quran/audio/ayah-recitation-abdur-rahman-as-sudais-recitation.db
+    - assets/quran/audio/ayah-recitation-mahmoud-khalil-al-husary-murattal-hafs-955.json
+    - assets/quran/audio/ayah-recitation-abdul-basit-abdul-samad-murattal-hafs-950.json
+    - assets/quran/audio/ayah-recitation-maher-al-mu-aiqly-murattal-hafs-948.db
+    - assets/quran/tafsir/
+    - assets/quran/irab/
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
@@ -129,8 +229,17 @@ flutter:
       fonts:
         - asset: assets/me_quran.ttf
 
+    - family: qcfSurahHeader
+      fonts:
+        - asset: assets/fonts/QCF_SurahHeader_COLOR-Regular.ttf
 
+    - family: quranCommon
+      fonts:
+        - asset: assets/fonts/quran-common.ttf
 
+    - family: surahNameV2
+      fonts:
+        - asset: assets/fonts/surah-name-v2.ttf
 
 
 

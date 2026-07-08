@@ -1,0 +1,558 @@
+{
+  "page": 1,
+  "originalViewBox": {
+    "x": 0,
+    "y": 0,
+    "width": 382.67999268,
+    "height": 547.09002686
+  },
+  "viewBox": {
+    "x": 92.97401428,
+    "y": 97.71668243,
+    "width": 197.32215881,
+    "height": 352.77397919
+  },
+  "crop": {
+    "x": 92.97401428,
+    "y": 97.71668243,
+    "width": 197.32215881,
+    "height": 352.77397919,
+    "source": "quran-only",
+    "horizontalPadding": 6,
+    "verticalPadding": 6
+  },
+  "cropRect": {
+    "x": 92.97401428,
+    "y": 97.71668243,
+    "width": 197.32215881,
+    "height": 352.77397919
+  },
+  "variant": "quran-only",
+  "cropSource": "#md-page-inner without external non-quranic groups",
+  "geometrySelectors": [
+    "[id^=\"md-word-\"]",
+    "[id^=\"md-aya-mark-\"]"
+  ],
+  "removedExternalSelectors": [
+    "#md-non-quranic-header-juz-name",
+    "#md-non-quranic-header-surah-name",
+    "#md-non-quranic-margin-juz-hisb",
+    "#md-non-quranic-margin-sajda",
+    "#md-non-quranic-margin-sakta",
+    "#md-non-quranic-page-number"
+  ],
+  "removedNonQuranicExternalOnly": true,
+  "ayahs": [
+    {
+      "surah": 1,
+      "ayah": 1,
+      "segments": [
+        {
+          "line": 7,
+          "x": 0.31007172,
+          "y": 0.50421325,
+          "w": 0.46349194,
+          "h": 0.06119105
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 7,
+          "hafs": "بِسۡمِ",
+          "x": 0.62044286,
+          "y": 0.52642646,
+          "w": 0.1531208,
+          "h": 0.03632024,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 7,
+          "hafs": "ٱللَّهِ",
+          "x": 0.56897849,
+          "y": 0.50741636,
+          "w": 0.06713747,
+          "h": 0.04932759,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 3,
+          "line": 7,
+          "hafs": "ٱلرَّحۡمَٰنِ",
+          "x": 0.34355199,
+          "y": 0.50631079,
+          "w": 0.2258737,
+          "h": 0.0590935,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 4,
+          "line": 7,
+          "hafs": "ٱلرَّحِيمِ",
+          "x": 0.31007172,
+          "y": 0.50421325,
+          "w": 0.15632471,
+          "h": 0.0559256,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 7,
+          "x": 0.24994585,
+          "y": 0.51623216,
+          "w": 0.06263304,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    },
+    {
+      "surah": 1,
+      "ayah": 2,
+      "segments": [
+        {
+          "line": 8,
+          "x": 0.20982384,
+          "y": 0.57902022,
+          "w": 0.65211873,
+          "h": 0.05652094
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 8,
+          "hafs": "ٱلۡحَمۡدُ",
+          "x": 0.67762673,
+          "y": 0.57902022,
+          "w": 0.18431583,
+          "h": 0.04229661,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 8,
+          "hafs": "لِلَّهِ",
+          "x": 0.60834221,
+          "y": 0.58055867,
+          "w": 0.06908424,
+          "h": 0.04828102,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 3,
+          "line": 8,
+          "hafs": "رَبِّ",
+          "x": 0.45889811,
+          "y": 0.58982803,
+          "w": 0.14372676,
+          "h": 0.04571313,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 4,
+          "line": 8,
+          "hafs": "ٱلۡعَٰلَمِينَ",
+          "x": 0.20982384,
+          "y": 0.57943468,
+          "w": 0.24765025,
+          "h": 0.05064241,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 8,
+          "x": 0.13662858,
+          "y": 0.58939523,
+          "w": 0.06263285,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    },
+    {
+      "surah": 1,
+      "ayah": 3,
+      "segments": [
+        {
+          "line": 9,
+          "x": 0.59998105,
+          "y": 0.64841313,
+          "w": 0.36498799,
+          "h": 0.06313262
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 9,
+          "hafs": "ٱلرَّحۡمَٰنِ",
+          "x": 0.79539017,
+          "y": 0.64983046,
+          "w": 0.16957888,
+          "h": 0.06171528,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 9,
+          "hafs": "ٱلرَّحِيمِ",
+          "x": 0.59998105,
+          "y": 0.64841313,
+          "w": 0.1882212,
+          "h": 0.05412815,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 9,
+          "x": 0.53688775,
+          "y": 0.66261488,
+          "w": 0.06263304,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    },
+    {
+      "surah": 1,
+      "ayah": 4,
+      "segments": [
+        {
+          "line": 9,
+          "x": 0.11160338,
+          "y": 0.65218329,
+          "w": 0.41265819,
+          "h": 0.06067624
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 9,
+          "hafs": "مَٰلِكِ",
+          "x": 0.35726155,
+          "y": 0.66282094,
+          "w": 0.16700002,
+          "h": 0.04133612,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 9,
+          "hafs": "يَوۡمِ",
+          "x": 0.26463602,
+          "y": 0.66131857,
+          "w": 0.08664851,
+          "h": 0.04205603,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 3,
+          "line": 9,
+          "hafs": "ٱلدِّينِ",
+          "x": 0.11160338,
+          "y": 0.65218329,
+          "w": 0.15851212,
+          "h": 0.06067624,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 9,
+          "x": 0.03101451,
+          "y": 0.66321014,
+          "w": 0.06263292,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    },
+    {
+      "surah": 1,
+      "ayah": 5,
+      "segments": [
+        {
+          "line": 10,
+          "x": 0.28431611,
+          "y": 0.72509878,
+          "w": 0.68527677,
+          "h": 0.04966021
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 10,
+          "hafs": "إِيَّاكَ",
+          "x": 0.84445872,
+          "y": 0.72722479,
+          "w": 0.12513416,
+          "h": 0.0475342,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 10,
+          "hafs": "نَعۡبُدُ",
+          "x": 0.70698968,
+          "y": 0.72706648,
+          "w": 0.12441724,
+          "h": 0.04166285,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 3,
+          "line": 10,
+          "hafs": "وَ",
+          "x": 0.65463355,
+          "y": 0.7307799,
+          "w": 0.03936441,
+          "h": 0.03740677,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 4,
+          "line": 10,
+          "hafs": "إِيَّاكَ",
+          "x": 0.53812726,
+          "y": 0.72603419,
+          "w": 0.1268876,
+          "h": 0.04570915,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 5,
+          "line": 10,
+          "hafs": "نَسۡتَعِينُ",
+          "x": 0.28431611,
+          "y": 0.72509878,
+          "w": 0.24262361,
+          "h": 0.04730747,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 10,
+          "x": 0.21264644,
+          "y": 0.73501254,
+          "w": 0.06263304,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    },
+    {
+      "surah": 1,
+      "ayah": 6,
+      "segments": [
+        {
+          "line": 10,
+          "x": 0.03040713,
+          "y": 0.71981863,
+          "w": 0.17610679,
+          "h": 0.0521838
+        },
+        {
+          "line": 11,
+          "x": 0.52865829,
+          "y": 0.78833279,
+          "w": 0.40676508,
+          "h": 0.05399804
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 10,
+          "hafs": "ٱهۡدِنَا",
+          "x": 0.03040713,
+          "y": 0.71981863,
+          "w": 0.17610679,
+          "h": 0.0521838,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 11,
+          "hafs": "ٱلصِّرَٰطَ",
+          "x": 0.77121965,
+          "y": 0.78943827,
+          "w": 0.16420371,
+          "h": 0.05159547,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 3,
+          "line": 11,
+          "hafs": "ٱلۡمُسۡتَقِيمَ",
+          "x": 0.52865829,
+          "y": 0.78833279,
+          "w": 0.23334317,
+          "h": 0.05399804,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 11,
+          "x": 0.46512699,
+          "y": 0.80321484,
+          "w": 0.06263304,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    },
+    {
+      "surah": 1,
+      "ayah": 7,
+      "segments": [
+        {
+          "line": 11,
+          "x": 0.05319473,
+          "y": 0.78423009,
+          "w": 0.40096588,
+          "h": 0.05917793
+        },
+        {
+          "line": 12,
+          "x": 0.14603515,
+          "y": 0.86069151,
+          "w": 0.70141822,
+          "h": 0.05971315
+        },
+        {
+          "line": 13,
+          "x": 0.37304864,
+          "y": 0.92754387,
+          "w": 0.33716675,
+          "h": 0.05331757
+        }
+      ],
+      "textWords": [
+        {
+          "wordIndex": 1,
+          "line": 11,
+          "hafs": "صِرَٰطَ",
+          "x": 0.32377881,
+          "y": 0.80014971,
+          "w": 0.1303818,
+          "h": 0.04191796,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 2,
+          "line": 11,
+          "hafs": "ٱلَّذِينَ",
+          "x": 0.21313129,
+          "y": 0.78423009,
+          "w": 0.10517956,
+          "h": 0.05917793,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 3,
+          "line": 11,
+          "hafs": "أَنۡعَمۡتَ",
+          "x": 0.05319473,
+          "y": 0.78488209,
+          "w": 0.15059,
+          "h": 0.04821034,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 4,
+          "line": 12,
+          "hafs": "عَلَيۡهِمۡ",
+          "x": 0.69675901,
+          "y": 0.86564208,
+          "w": 0.15069436,
+          "h": 0.05452902,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 5,
+          "line": 12,
+          "hafs": "غَيۡرِ",
+          "x": 0.59406173,
+          "y": 0.86958223,
+          "w": 0.1053827,
+          "h": 0.0495468,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 6,
+          "line": 12,
+          "hafs": "ٱلۡمَغۡضُوبِ",
+          "x": 0.31456958,
+          "y": 0.86069151,
+          "w": 0.29382529,
+          "h": 0.05829581,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 7,
+          "line": 12,
+          "hafs": "عَلَيۡهِمۡ",
+          "x": 0.14603515,
+          "y": 0.8633011,
+          "w": 0.16118489,
+          "h": 0.05710357,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 8,
+          "line": 13,
+          "hafs": "وَ",
+          "x": 0.66999557,
+          "y": 0.94631694,
+          "w": 0.04021983,
+          "h": 0.03387035,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 9,
+          "line": 13,
+          "hafs": "لَا",
+          "x": 0.63508617,
+          "y": 0.93004584,
+          "w": 0.04720538,
+          "h": 0.04328115,
+          "outsideCrop": false
+        },
+        {
+          "wordIndex": 10,
+          "line": 13,
+          "hafs": "ٱلضَّآلِّينَ",
+          "x": 0.37304864,
+          "y": 0.92754387,
+          "w": 0.25693518,
+          "h": 0.05331757,
+          "outsideCrop": false
+        }
+      ],
+      "ayahNumberBoxes": [
+        {
+          "line": 13,
+          "x": 0.29768503,
+          "y": 0.93947774,
+          "w": 0.06263304,
+          "h": 0.0435142,
+          "outsideCrop": false
+        }
+      ]
+    }
+  ],
+  "outputImageSize": {
+    "width": 1300,
+    "height": 2324,
+    "format": "png"
+  }
+}

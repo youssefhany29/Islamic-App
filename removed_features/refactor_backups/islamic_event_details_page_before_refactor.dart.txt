@@ -1,0 +1,2081 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/shared/widgets/app_main_components/custom_app_bar.dart';
+import 'package:islamic_app/shared/widgets/common_components/app_layout_constants.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+import 'package:image_picker/image_picker.dart' as image_picker;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+import '../models/islamic_event_model.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+
+bool _eventDetailsLargeScreen(BuildContext context) {
+  final Size size = MediaQuery.sizeOf(context);
+  return size.shortestSide >= 600 || (size.width >= 700 && size.height >= 500);
+}
+
+enum _ShareBackgroundMode { image, color }
+
+class IslamicEventDetailsPage extends StatefulWidget {
+  const IslamicEventDetailsPage({super.key, required this.event});
+
+  final IslamicEventModel event;
+
+  @override
+  State<IslamicEventDetailsPage> createState() =>
+      _IslamicEventDetailsPageState();
+}
+
+class _IslamicEventDetailsPageState extends State<IslamicEventDetailsPage> {
+  final GlobalKey _shareCardKey = GlobalKey();
+
+  int _selectedImageIndex = 0;
+  int _selectedColorIndex = 0;
+  bool _isSharingImage = false;
+  bool _shareTextIsWhite = true;
+  double _shareFontSize = 18.5;
+  double _shareTitleGreetingSpacing = 10;
+
+  String? _customShareTitle;
+  String? _customShareGreeting;
+  File? _pickedShareBackgroundFile;
+
+  _ShareBackgroundMode _backgroundMode = _ShareBackgroundMode.image;
+
+  IslamicEventModel get event => widget.event;
+
+  bool get _isFastingEvent {
+    return event.type == IslamicEventType.fasting ||
+        event.title.contains('صيام') ||
+        event.title.contains('الأيام البيض') ||
+        event.title.contains('عرفة') ||
+        event.title.contains('عاشوراء') ||
+        event.title.contains('ذي الحجة');
+  }
+
+  bool get _isGreetingEvent {
+    return event.type == IslamicEventType.greeting ||
+        event.title.contains('عيد') ||
+        event.title.contains('رمضان مبارك') ||
+        event.title.contains('الفطر') ||
+        event.title.contains('الأضحى');
+  }
+
+  bool get _isEidEvent {
+    return event.title.contains('عيد') ||
+        event.title.contains('الفطر') ||
+        event.title.contains('الأضحى');
+  }
+
+  bool get _isRamadanEvent {
+    return event.title.contains('رمضان') ||
+        event.title.contains('العشر الأواخر');
+  }
+
+  bool get _isWhiteDays {
+    return event.title.contains('الأيام البيض');
+  }
+
+  bool get _isArafah {
+    return event.title.contains('عرفة');
+  }
+
+  bool get _isAshura {
+    return event.title.contains('عاشوراء') || event.title.contains('تاسوعاء');
+  }
+
+  bool get _isDhulHijjahFirstDays {
+    return event.title.contains('ذي الحجة') ||
+        event.title.contains('العشر الأوائل');
+  }
+
+  bool get _isMondayThursday {
+    return event.title.contains('الاثنين') || event.title.contains('الخميس');
+  }
+
+  List<String> get _shareImageBackgrounds {
+    final String folder = _isEidEvent ? 'eid' : 'ramadan';
+
+    return List.generate(
+      5,
+      (index) => 'assets/background/$folder/${index + 1}.webp',
+    );
+  }
+
+  List<Color> get _shareColorBackgrounds {
+    if (_isEidEvent) {
+      return const [
+        Color(0xff0F4A3C),
+        Color(0xff102D5C),
+        Color(0xffF1DFB8),
+        Color(0xffD99A9A),
+        Color(0xff0F6B66),
+      ];
+    }
+
+    return const [
+      Color(0xff8B5E3C),
+      Color(0xff9A6A4F),
+      Color(0xffA65F46),
+      Color(0xff7A6A43),
+      Color(0xff8A5A5A),
+    ];
+  }
+
+  Color get _selectedColorBackground {
+    return _shareColorBackgrounds[_selectedColorIndex %
+        _shareColorBackgrounds.length];
+  }
+
+  String get _selectedImageBackground {
+    return _shareImageBackgrounds[_selectedImageIndex %
+        _shareImageBackgrounds.length];
+  }
+
+  bool get _isUsingImageBackground {
+    return _backgroundMode == _ShareBackgroundMode.image;
+  }
+
+  int _daysUntil(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+
+    return target.difference(today).inDays;
+  }
+
+  String _daysText(int days) {
+    if (days == 0) return 'اليوم';
+    if (days == 1) return 'غدًا';
+    if (days == 2) return 'بعد يومين';
+
+    return 'بعد $days أيام';
+  }
+
+  String _gregorianDateText(DateTime date) {
+    final String day = date.day.toString().padLeft(2, '0');
+    final String month = date.month.toString().padLeft(2, '0');
+    final String year = date.year.toString();
+
+    return '$day/$month/$year';
+  }
+
+  String _typeText(IslamicEventType type) {
+    switch (type) {
+      case IslamicEventType.fasting:
+        return 'صيام';
+      case IslamicEventType.greeting:
+        return 'تهنئة';
+      case IslamicEventType.specialDay:
+        return 'مناسبة خاصة';
+      case IslamicEventType.reminder:
+        return 'تذكير';
+    }
+  }
+
+  IconData _typeIcon(IslamicEventType type) {
+    switch (type) {
+      case IslamicEventType.fasting:
+        return Icons.nightlight_round;
+      case IslamicEventType.greeting:
+        return Icons.celebration_rounded;
+      case IslamicEventType.specialDay:
+        return Icons.star_rounded;
+      case IslamicEventType.reminder:
+        return Icons.notifications_active_rounded;
+    }
+  }
+
+  String _mainAdviceText() {
+    if (_isArafah) {
+      return 'يوم عرفة من أعظم أيام العام، فاستعد له بالصيام إن استطعت، وأكثر من الدعاء والاستغفار والذكر.';
+    }
+
+    if (_isAshura) {
+      return 'تاسوعاء وعاشوراء فرصة عظيمة للصيام والعمل الصالح، فاستعد بنية صادقة وذكر كثير.';
+    }
+
+    if (_isWhiteDays) {
+      return 'الأيام البيض فرصة جميلة لتثبيت عادة الصيام كل شهر، جهّز نيتك من الليل وخفّف طعامك للسحور.';
+    }
+
+    if (_isDhulHijjahFirstDays) {
+      return 'العشر الأوائل من ذي الحجة أيام مباركة، أكثر فيها من التكبير والذكر والصدقة والعمل الصالح.';
+    }
+
+    if (_isMondayThursday) {
+      return 'صيام الاثنين والخميس عادة عظيمة، حاول تجهيز نيتك من الليل واجعلها بداية لأسبوع مليء بالطاعة.';
+    }
+
+    if (event.title.contains('عيد أضحى')) {
+      return 'استقبل العيد بالفرح وصلة الرحم، ولا تنس التكبير وإدخال السرور على أهلك ومن حولك.';
+    }
+
+    if (event.title.contains('عيد فطر')) {
+      return 'اجعل العيد بداية شكر وفرح بعد رمضان، وصل رحمك وشارك من حولك الكلمة الطيبة والتهنئة.';
+    }
+
+    if (_isRamadanEvent) {
+      return 'استعد لرمضان بالقرآن والدعاء وتنظيم الوقت، واجعل لك وردًا ثابتًا من الآن.';
+    }
+
+    if (_isGreetingEvent) {
+      return 'اجعل هذه المناسبة فرصة لصلة الرحم، وإدخال السرور على أهلك ومن حولك.';
+    }
+
+    if (_isFastingEvent) {
+      return 'استعد لهذه المناسبة بنية صادقة، وأكثر من الدعاء والذكر والعمل الصالح.';
+    }
+
+    return 'اجعل هذه المناسبة فرصة للتذكّر، والذكر، والعمل الصالح.';
+  }
+
+  String _sharingText() {
+    if (event.title.contains('عيد أضحى')) {
+      return 'عيد أضحى مبارك\nكل عام وأنتم بخير\nتقبل الله منا ومنكم صالح الأعمال';
+    }
+
+    if (event.title.contains('عيد فطر')) {
+      return 'عيد فطر مبارك\nكل عام وأنتم بخير\nتقبل الله منا ومنكم صالح الأعمال';
+    }
+
+    if (event.title.contains('رمضان')) {
+      return 'رمضان مبارك\nاللهم بلغنا رمضان وبارك لنا فيه\nوأعنا على الصيام والقيام';
+    }
+
+    if (_isArafah) {
+      return 'غدًا يوم عرفة\nلا تنس نية الصيام والدعاء\nخير الدعاء دعاء يوم عرفة';
+    }
+
+    if (_isAshura) {
+      return '${event.title}\nمن الأيام المستحب صيامها\nتقبل الله منا ومنكم';
+    }
+
+    if (_isWhiteDays) {
+      return 'تذكير بالأيام البيض\nلا تنس نية الصيام\nوتقبل الله منك صالح العمل';
+    }
+
+    if (_isMondayThursday) {
+      return '${event.title}\nلا تنس نية الصيام من الليل\nتقبل الله منك';
+    }
+
+    return '${event.title}\n${event.subtitle}';
+  }
+
+  List<String> _sharingLines() {
+    return _sharingText()
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+  }
+
+  String _defaultShareTitle() {
+    final lines = _sharingLines();
+    if (lines.isEmpty) return event.title;
+    return lines.first;
+  }
+
+  String _defaultShareGreeting() {
+    final lines = _sharingLines();
+    if (lines.length <= 1) return event.subtitle;
+    return lines.skip(1).join('\n');
+  }
+
+  String _currentShareTitle() {
+    final customTitle = _customShareTitle?.trim();
+
+    if (customTitle != null && customTitle.isNotEmpty) {
+      return customTitle;
+    }
+
+    return _defaultShareTitle();
+  }
+
+  String _currentShareGreeting() {
+    final customGreeting = _customShareGreeting?.trim();
+
+    if (customGreeting != null && customGreeting.isNotEmpty) {
+      return customGreeting;
+    }
+
+    return _defaultShareGreeting();
+  }
+
+  String _currentSharingText() {
+    final title = _currentShareTitle();
+    final greeting = _currentShareGreeting();
+
+    if (greeting.trim().isEmpty) {
+      return title;
+    }
+
+    return '$title\n$greeting';
+  }
+
+  void _changeImageBackground(
+    BuildContext context,
+    void Function(void Function()) setSheetState,
+  ) {
+    AppHaptics.tap(context);
+
+    setSheetState(() {
+      _pickedShareBackgroundFile = null;
+      _backgroundMode = _ShareBackgroundMode.image;
+      _selectedImageIndex =
+          (_selectedImageIndex + 1) % _shareImageBackgrounds.length;
+    });
+
+    setState(() {});
+  }
+
+  void _changeColorBackground(
+    BuildContext context,
+    void Function(void Function()) setSheetState,
+  ) {
+    AppHaptics.tap(context);
+
+    setSheetState(() {
+      _backgroundMode = _ShareBackgroundMode.color;
+      _selectedColorIndex =
+          (_selectedColorIndex + 1) % _shareColorBackgrounds.length;
+    });
+
+    setState(() {});
+  }
+
+  void _changeShareTextColor(
+    bool isWhite,
+    void Function(void Function()) setSheetState,
+  ) {
+    AppHaptics.tap(context);
+
+    setSheetState(() {
+      _shareTextIsWhite = isWhite;
+    });
+
+    setState(() {});
+  }
+
+  void _changeShareFontSize(
+    double value,
+    void Function(void Function()) setSheetState,
+  ) {
+    setSheetState(() {
+      _shareFontSize = value;
+    });
+
+    setState(() {});
+  }
+
+  void _changeShareSpacing(
+    double value,
+    void Function(void Function()) setSheetState,
+  ) {
+    setSheetState(() {
+      _shareTitleGreetingSpacing = value;
+    });
+
+    setState(() {});
+  }
+
+  Future<void> _pickCustomShareBackground(
+    void Function(void Function()) setSheetState,
+  ) async {
+    AppHaptics.tap(context);
+
+    final picker = image_picker.ImagePicker();
+
+    final image_picker.XFile? pickedFile = await picker.pickImage(
+      source: image_picker.ImageSource.gallery,
+      imageQuality: 85,
+    );
+
+    if (pickedFile == null) return;
+
+    setSheetState(() {
+      _pickedShareBackgroundFile = File(pickedFile.path);
+      _backgroundMode = _ShareBackgroundMode.image;
+    });
+
+    setState(() {});
+  }
+
+  void _updateShareTitle(
+    String value,
+    void Function(void Function()) setSheetState,
+  ) {
+    setSheetState(() {
+      _customShareTitle = value;
+    });
+
+    setState(() {});
+  }
+
+  void _updateShareGreeting(
+    String value,
+    void Function(void Function()) setSheetState,
+  ) {
+    setSheetState(() {
+      _customShareGreeting = value;
+    });
+
+    setState(() {});
+  }
+
+  void _openShareOptions(BuildContext context) {
+    AppHaptics.tap(context);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return _ShareOptionsSheet(
+              shareCardKey: _shareCardKey,
+              shareTitle: _currentShareTitle(),
+              shareGreeting: _currentShareGreeting(),
+              imageBackgroundPath: _selectedImageBackground,
+              pickedBackgroundFile: _pickedShareBackgroundFile,
+              colorBackground: _selectedColorBackground,
+              backgroundMode: _backgroundMode,
+              isEidEvent: _isEidEvent,
+              isSharingImage: _isSharingImage,
+              shareTextIsWhite: _shareTextIsWhite,
+              shareFontSize: _shareFontSize,
+              titleGreetingSpacing: _shareTitleGreetingSpacing,
+
+              onTitleChanged: (value) {
+                _updateShareTitle(value, setSheetState);
+              },
+              onGreetingChanged: (value) {
+                _updateShareGreeting(value, setSheetState);
+              },
+              onChangeTextColor: (isWhite) {
+                _changeShareTextColor(isWhite, setSheetState);
+              },
+              onChangeFontSize: (value) {
+                _changeShareFontSize(value, setSheetState);
+              },
+              onChangeSpacing: (value) {
+                _changeShareSpacing(value, setSheetState);
+              },
+
+              onPickCustomBackground: () {
+                _pickCustomShareBackground(setSheetState);
+              },
+              onChangeImageBackground: () {
+                _changeImageBackground(context, setSheetState);
+              },
+              onChangeColorBackground: () {
+                _changeColorBackground(context, setSheetState);
+              },
+              onShareText: () {
+                _shareAsText(context);
+              },
+              onShareImage: () async {
+                setSheetState(() {
+                  _isSharingImage = true;
+                });
+
+                await _shareAsImage(context);
+
+                if (!mounted) return;
+
+                setSheetState(() {
+                  _isSharingImage = false;
+                });
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _shareAsText(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    await SharePlus.instance.share(ShareParams(text: _currentSharingText()));
+  }
+
+  Future<void> _shareAsImage(BuildContext context) async {
+    AppHaptics.tap(context);
+
+    try {
+      final boundary =
+          _shareCardKey.currentContext?.findRenderObject()
+              as RenderRepaintBoundary?;
+
+      if (boundary == null) {
+        _showSnackBar(
+          context,
+          message: 'حدث خطأ أثناء تجهيز الصورة',
+          icon: Icons.error_outline_rounded,
+        );
+        return;
+      }
+
+      final ui.Image image = await boundary.toImage(pixelRatio: 3);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      if (byteData == null) {
+        _showSnackBar(
+          context,
+          message: 'تعذر حفظ صورة المشاركة',
+          icon: Icons.error_outline_rounded,
+        );
+        return;
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final file = File(
+        '${tempDir.path}/islamic_event_share_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+
+      await file.writeAsBytes(byteData.buffer.asUint8List());
+
+      await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+    } catch (_) {
+      if (!context.mounted) return;
+
+      _showSnackBar(
+        context,
+        message: 'حدث خطأ أثناء مشاركة الصورة',
+        icon: Icons.error_outline_rounded,
+      );
+    }
+  }
+
+  void _showSnackBar(
+    BuildContext context, {
+    required String message,
+    required IconData icon,
+  }) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xff171B26),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+        margin: EdgeInsets.symmetric(horizontal: 16.w, vertical: 14.h),
+        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16.r),
+        ),
+        content: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Row(
+            children: [
+              Icon(icon, color: const Color(0xff21C58E), size: 21.sp),
+              SizedBox(width: 10.w),
+              Expanded(
+                child: Text(
+                  message,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final int days = _daysUntil(event.gregorianDate);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    final List<Widget> infoCards = [
+      _InfoCard(
+        icon: Icons.info_outline_rounded,
+        title: 'عن المناسبة',
+        body: event.subtitle,
+      ),
+      _InfoCard(
+        icon: Icons.favorite_rounded,
+        title: 'نصيحة اليوم',
+        body: _mainAdviceText(),
+      ),
+      if (_isFastingEvent) const _FastingIntentionCard(),
+      if (_isGreetingEvent ||
+          _isRamadanEvent ||
+          _isFastingEvent ||
+          event.type == IslamicEventType.specialDay ||
+          event.type == IslamicEventType.reminder)
+        _ShareGreetingCard(onTap: () => _openShareOptions(context)),
+    ];
+
+    if (!large) {
+      return Scaffold(
+        backgroundColor: theme.colorScheme.background,
+        appBar: const CustomAppBar(
+          category: CustomAppBarCategory(text: 'تفاصيل المناسبة'),
+        ),
+        body: SafeArea(
+          top: false,
+          child: ListView(
+            physics: const BouncingScrollPhysics(),
+            padding: EdgeInsets.symmetric(
+              horizontal: AppLayoutConstants.pageHorizontalPadding,
+            ),
+            children: [
+              SizedBox(height: 16.h),
+              _HeroDetailsCard(
+                event: event,
+                daysText: event.isToday ? 'اليوم' : _daysText(days),
+                gregorianDateText: _gregorianDateText(event.gregorianDate),
+                typeText: _typeText(event.type),
+                typeIcon: _typeIcon(event.type),
+              ),
+              SizedBox(height: 14.h),
+              for (int i = 0; i < infoCards.length; i++) ...[
+                infoCards[i],
+                if (i != infoCards.length - 1) SizedBox(height: 12.h),
+              ],
+              SizedBox(height: 18.h),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: theme.colorScheme.background,
+      appBar: const CustomAppBar(
+        category: CustomAppBarCategory(text: 'تفاصيل المناسبة'),
+      ),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(28, 18, 28, 32),
+          children: [
+            _HeroDetailsCard(
+              event: event,
+              daysText: event.isToday ? 'اليوم' : _daysText(days),
+              gregorianDateText: _gregorianDateText(event.gregorianDate),
+              typeText: _typeText(event.type),
+              typeIcon: _typeIcon(event.type),
+            ),
+            const SizedBox(height: 16),
+            Column(
+              children: [
+                for (int i = 0; i < infoCards.length; i++) ...[
+                  infoCards[i],
+                  if (i != infoCards.length - 1) const SizedBox(height: 14),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailsMasonry extends StatelessWidget {
+  const _DetailsMasonry({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    if (children.length <= 1) {
+      return Column(children: children);
+    }
+
+    final List<Widget> right = <Widget>[];
+    final List<Widget> left = <Widget>[];
+
+    for (int i = 0; i < children.length; i++) {
+      if (i.isEven) {
+        right.add(children[i]);
+      } else {
+        left.add(children[i]);
+      }
+    }
+
+    return Row(
+      textDirection: TextDirection.rtl,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            children: [
+              for (int i = 0; i < right.length; i++) ...[
+                right[i],
+                if (i != right.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            children: [
+              for (int i = 0; i < left.length; i++) ...[
+                left[i],
+                if (i != left.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HeroDetailsCard extends StatelessWidget {
+  const _HeroDetailsCard({
+    required this.event,
+    required this.daysText,
+    required this.gregorianDateText,
+    required this.typeText,
+    required this.typeIcon,
+  });
+
+  final IslamicEventModel event;
+  final String daysText;
+  final String gregorianDateText;
+  final String typeText;
+  final IconData typeIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    final double padding = large ? 18 : 18.w;
+    final double radius = large ? 24 : 24.r;
+    final double iconBox = large ? 48 : 48.w;
+    final double iconSize = large ? 24 : 25.sp;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary,
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Container(
+                  width: iconBox,
+                  height: iconBox,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(large ? 17 : 17.r),
+                  ),
+                  child: Icon(event.icon, color: Colors.white, size: iconSize),
+                ),
+                SizedBox(width: large ? 10 : 10.w),
+                Expanded(
+                  child: Text(
+                    event.title,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    locale: const Locale('ar'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.headline(context).copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: large ? 16 : 16.h),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final bool twoRows = !large || constraints.maxWidth < 720;
+
+                final items = [
+                  _HeroMiniInfo(
+                    icon: Icons.access_time_rounded,
+                    title: 'الموعد',
+                    value: daysText,
+                  ),
+                  _HeroMiniInfo(
+                    icon: Icons.calendar_month_rounded,
+                    title: 'ميلادي',
+                    value: gregorianDateText,
+                  ),
+                  _HeroMiniInfo(
+                    icon: Icons.nightlight_round,
+                    title: 'هجري',
+                    value: event.hijriDateText,
+                    valueFontSize: large ? 9 : 8.sp,
+                    valueFontWeight: FontWeight.w500,
+                    valueMaxLines: 2,
+                  ),
+                  _HeroMiniInfo(
+                    icon: typeIcon,
+                    title: 'النوع',
+                    value: typeText,
+                  ),
+                ];
+
+                if (twoRows) {
+                  return Column(
+                    children: [
+                      Row(
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Expanded(child: items[0]),
+                          SizedBox(width: large ? 8 : 8.w),
+                          Expanded(child: items[1]),
+                        ],
+                      ),
+                      SizedBox(height: large ? 8 : 8.h),
+                      Row(
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Expanded(child: items[2]),
+                          SizedBox(width: large ? 8 : 8.w),
+                          Expanded(child: items[3]),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    for (int i = 0; i < items.length; i++) ...[
+                      Expanded(child: items[i]),
+                      if (i != items.length - 1) const SizedBox(width: 8),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroMiniInfo extends StatelessWidget {
+  const _HeroMiniInfo({
+    required this.icon,
+    required this.title,
+    required this.value,
+    this.valueFontSize,
+    this.valueFontWeight,
+    this.valueMaxLines = 1,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final double? valueFontSize;
+  final FontWeight? valueFontWeight;
+  final int valueMaxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Container(
+      constraints: BoxConstraints(minHeight: large ? 58 : 58.h),
+      padding: EdgeInsets.symmetric(
+        horizontal: large ? 9 : 9.w,
+        vertical: large ? 8 : 8.h,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.13),
+        borderRadius: BorderRadius.circular(large ? 15 : 15.r),
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Icon(icon, color: Colors.white, size: large ? 15 : 15.sp),
+          SizedBox(width: large ? 5 : 5.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    title,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.caption(context).copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white.withOpacity(0.70),
+                    ),
+                  ),
+                ),
+                SizedBox(height: large ? 2 : 2.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    maxLines: valueMaxLines,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.caption(context).copyWith(
+                      fontWeight: valueFontWeight ?? FontWeight.w700,
+                      color: Colors.white,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(large ? 14 : 14.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(large ? 20 : 20.r),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(isDark ? 0.20 : 0.42),
+        ),
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Row(
+          textDirection: TextDirection.rtl,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: large ? 40 : 40.w,
+              height: large ? 40 : 40.w,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(
+                  isDark ? 0.24 : 0.10,
+                ),
+                borderRadius: BorderRadius.circular(large ? 14 : 14.r),
+              ),
+              child: Icon(
+                icon,
+                color: theme.colorScheme.primary,
+                size: large ? 19 : 20.sp,
+              ),
+            ),
+            SizedBox(width: large ? 10 : 10.w),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      locale: const Locale('ar'),
+                      style: AppTextStyles.caption(context).copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: theme.colorScheme.surface,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: large ? 4 : 4.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      body,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      locale: const Locale('ar'),
+                      style: AppTextStyles.caption(context).copyWith(
+                        fontWeight: FontWeight.w500,
+                        color: theme.colorScheme.surface.withOpacity(0.70),
+                        height: 1.55,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FastingIntentionCard extends StatelessWidget {
+  const _FastingIntentionCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(large ? 14 : 14.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(large ? 20 : 20.r),
+        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.25)),
+      ),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Icon(
+              Icons.nightlight_round,
+              color: theme.colorScheme.primary,
+              size: large ? 22 : 24.sp,
+            ),
+            SizedBox(width: large ? 10 : 10.w),
+            Expanded(
+              child: Text(
+                'لا تنس نية الصيام قبل الفجر، وأكثر من الدعاء والذكر والعمل الصالح.',
+                textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
+                locale: const Locale('ar'),
+                style: AppTextStyles.caption(context).copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: theme.colorScheme.surface,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ShareGreetingCard extends StatelessWidget {
+  const _ShareGreetingCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Material(
+      color: theme.colorScheme.primary,
+      borderRadius: BorderRadius.circular(large ? 20 : 20.r),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(large ? 20 : 20.r),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(large ? 14 : 14.w),
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Icon(
+                  Icons.ios_share_rounded,
+                  color: Colors.white,
+                  size: large ? 20 : 22.sp,
+                ),
+                SizedBox(width: large ? 10 : 10.w),
+                Expanded(
+                  child: Text(
+                    'مشاركة التهنئة',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    locale: const Locale('ar'),
+                    style: AppTextStyles.caption(context).copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: Colors.white.withOpacity(0.85),
+                  size: large ? 14 : 15.sp,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShareOptionsSheet extends StatelessWidget {
+  const _ShareOptionsSheet({
+    required this.shareCardKey,
+    required this.shareTitle,
+    required this.shareGreeting,
+    required this.imageBackgroundPath,
+    required this.pickedBackgroundFile,
+    required this.colorBackground,
+    required this.backgroundMode,
+    required this.isEidEvent,
+    required this.isSharingImage,
+    required this.shareTextIsWhite,
+    required this.shareFontSize,
+    required this.titleGreetingSpacing,
+    required this.onTitleChanged,
+    required this.onGreetingChanged,
+    required this.onChangeTextColor,
+    required this.onChangeFontSize,
+    required this.onChangeSpacing,
+    required this.onPickCustomBackground,
+    required this.onChangeImageBackground,
+    required this.onChangeColorBackground,
+    required this.onShareText,
+    required this.onShareImage,
+  });
+
+  final GlobalKey shareCardKey;
+  final String shareTitle;
+  final String shareGreeting;
+  final String imageBackgroundPath;
+  final File? pickedBackgroundFile;
+  final Color colorBackground;
+  final _ShareBackgroundMode backgroundMode;
+  final bool isEidEvent;
+  final bool isSharingImage;
+
+  final bool shareTextIsWhite;
+  final double shareFontSize;
+  final double titleGreetingSpacing;
+
+  final ValueChanged<String> onTitleChanged;
+  final ValueChanged<String> onGreetingChanged;
+  final ValueChanged<bool> onChangeTextColor;
+  final ValueChanged<double> onChangeFontSize;
+  final ValueChanged<double> onChangeSpacing;
+
+  final VoidCallback onPickCustomBackground;
+  final VoidCallback onChangeImageBackground;
+  final VoidCallback onChangeColorBackground;
+  final VoidCallback onShareText;
+  final Future<void> Function() onShareImage;
+
+  bool get _isImageMode => backgroundMode == _ShareBackgroundMode.image;
+
+  String get _backgroundStatusText {
+    if (pickedBackgroundFile != null && _isImageMode) {
+      return 'الخلفية الحالية: صورة من الجهاز';
+    }
+
+    return _isImageMode
+        ? 'الخلفية الحالية: صورة جاهزة'
+        : 'الخلفية الحالية: لون';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    final double horizontalPadding = large ? 22 : 16.w;
+    final double topPadding = large ? 16 : 16.h;
+    final double bottomPadding = large ? 18 : 18.h;
+    final double radius = large ? 30 : 26.r;
+    final double previewGap = large ? 14 : 14.h;
+    final double safeTop = MediaQuery.viewPaddingOf(context).top;
+    final double sheetMaxHeight =
+        MediaQuery.sizeOf(context).height - safeTop - (large ? 14 : 10.h);
+
+    return SafeArea(
+      top: true,
+      bottom: true,
+      child: Container(
+        width: double.infinity,
+        constraints: BoxConstraints(maxHeight: sheetMaxHeight),
+        padding: EdgeInsets.fromLTRB(
+          horizontalPadding,
+          topPadding,
+          horizontalPadding,
+          bottomPadding,
+        ),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.background,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(radius)),
+        ),
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Align(
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: large ? 54 : 42.w,
+                    height: large ? 4 : 4.h,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ),
+                SizedBox(height: large ? 14 : 14.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    isEidEvent ? 'مشاركة تهنئة العيد' : 'مشاركة التذكير',
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    locale: const Locale('ar'),
+                    style: AppTextStyles.headline(context).copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: theme.colorScheme.surface,
+                      letterSpacing: 0,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+                SizedBox(height: large ? 4 : 4.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    _backgroundStatusText,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    locale: const Locale('ar'),
+                    style: AppTextStyles.caption(context).copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.surface.withOpacity(0.55),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                SizedBox(height: large ? 14 : 12.h),
+                Align(
+                  alignment: Alignment.center,
+                  child: RepaintBoundary(
+                    key: shareCardKey,
+                    child: _ShareImageCard(
+                      title: shareTitle,
+                      greeting: shareGreeting,
+                      imageBackgroundPath: imageBackgroundPath,
+                      pickedBackgroundFile: pickedBackgroundFile,
+                      colorBackground: colorBackground,
+                      backgroundMode: backgroundMode,
+                      shareTextIsWhite: shareTextIsWhite,
+                      shareFontSize: shareFontSize,
+                      titleGreetingSpacing: titleGreetingSpacing,
+                    ),
+                  ),
+                ),
+                SizedBox(height: previewGap),
+                _ShareEditableTextControls(
+                  title: shareTitle,
+                  greeting: shareGreeting,
+                  onTitleChanged: onTitleChanged,
+                  onGreetingChanged: onGreetingChanged,
+                ),
+                SizedBox(height: large ? 12 : 12.h),
+                _ShareTextStyleControls(
+                  shareTextIsWhite: shareTextIsWhite,
+                  shareFontSize: shareFontSize,
+                  titleGreetingSpacing: titleGreetingSpacing,
+                  onChangeTextColor: onChangeTextColor,
+                  onChangeFontSize: onChangeFontSize,
+                  onChangeSpacing: onChangeSpacing,
+                ),
+                SizedBox(height: large ? 12 : 12.h),
+                _ShareActionButton(
+                  title: 'من الجهاز',
+                  icon: Icons.photo_library_rounded,
+                  onTap: onPickCustomBackground,
+                ),
+                SizedBox(height: large ? 8 : 8.h),
+                _ShareActionButton(
+                  title: 'تغيير الصورة',
+                  icon: Icons.image_rounded,
+                  onTap: onChangeImageBackground,
+                ),
+                SizedBox(height: large ? 8 : 8.h),
+                _ShareActionButton(
+                  title: 'اختيار لون',
+                  icon: Icons.palette_rounded,
+                  onTap: onChangeColorBackground,
+                ),
+                SizedBox(height: large ? 8 : 8.h),
+                _ShareActionButton(
+                  title: 'مشاركة كنص',
+                  icon: Icons.text_fields_rounded,
+                  onTap: onShareText,
+                ),
+                SizedBox(height: large ? 8 : 8.h),
+                _ShareActionButton(
+                  title: isSharingImage
+                      ? 'جاري تجهيز الصورة...'
+                      : 'مشاركة كصورة',
+                  icon: Icons.ios_share_rounded,
+                  isLoading: isSharingImage,
+                  onTap: isSharingImage ? null : onShareImage,
+                  isPrimary: true,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShareActionsWrap extends StatelessWidget {
+  const _ShareActionsWrap({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final double buttonWidth = (MediaQuery.of(context).size.width - 48.w) / 2;
+
+    return Wrap(
+      spacing: 8.w,
+      runSpacing: 8.h,
+      alignment: WrapAlignment.center,
+      children: children.map((child) {
+        return SizedBox(width: buttonWidth, child: child);
+      }).toList(),
+    );
+  }
+}
+
+class _ShareEditableTextControls extends StatelessWidget {
+  const _ShareEditableTextControls({
+    required this.title,
+    required this.greeting,
+    required this.onTitleChanged,
+    required this.onGreetingChanged,
+  });
+
+  final String title;
+  final String greeting;
+  final ValueChanged<String> onTitleChanged;
+  final ValueChanged<String> onGreetingChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(large ? 12 : 12.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(large ? 18 : 18.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'تعديل نص المشاركة',
+            textAlign: TextAlign.right,
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface,
+              letterSpacing: 0,
+            ),
+          ),
+
+          SizedBox(height: 10.h),
+
+          _ShareEditTextField(
+            initialValue: title,
+            label: 'عنوان المناسبة',
+            maxLines: 1,
+            onChanged: onTitleChanged,
+          ),
+
+          SizedBox(height: 10.h),
+
+          _ShareEditTextField(
+            initialValue: greeting,
+            label: 'نص التهنئة أو التذكير',
+            maxLines: 4,
+            onChanged: onGreetingChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShareEditTextField extends StatefulWidget {
+  const _ShareEditTextField({
+    required this.initialValue,
+    required this.label,
+    required this.maxLines,
+    required this.onChanged,
+  });
+
+  final String initialValue;
+  final String label;
+  final int maxLines;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_ShareEditTextField> createState() => _ShareEditTextFieldState();
+}
+
+class _ShareEditTextFieldState extends State<_ShareEditTextField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ShareEditTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.initialValue != widget.initialValue &&
+        _controller.text != widget.initialValue) {
+      _controller.value = TextEditingValue(
+        text: widget.initialValue,
+        selection: TextSelection.collapsed(offset: widget.initialValue.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: TextField(
+        controller: _controller,
+        maxLines: widget.maxLines,
+        textAlign: TextAlign.right,
+        textDirection: TextDirection.rtl,
+        onChanged: widget.onChanged,
+        style: AppTextStyles.caption(context).copyWith(
+          fontWeight: FontWeight.w600,
+          color: Theme.of(context).colorScheme.surface,
+          height: 1.45,
+          letterSpacing: 0,
+        ),
+        decoration: InputDecoration(
+          labelText: widget.label,
+          alignLabelWithHint: widget.maxLines > 1,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(large ? 14 : 14.r),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShareTextStyleControls extends StatelessWidget {
+  const _ShareTextStyleControls({
+    required this.shareTextIsWhite,
+    required this.shareFontSize,
+    required this.titleGreetingSpacing,
+    required this.onChangeTextColor,
+    required this.onChangeFontSize,
+    required this.onChangeSpacing,
+  });
+
+  final bool shareTextIsWhite;
+  final double shareFontSize;
+  final double titleGreetingSpacing;
+
+  final ValueChanged<bool> onChangeTextColor;
+  final ValueChanged<double> onChangeFontSize;
+  final ValueChanged<double> onChangeSpacing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(large ? 12 : 12.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(large ? 18 : 18.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'تخصيص النص',
+            textAlign: TextAlign.right,
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+              fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface,
+              letterSpacing: 0,
+            ),
+          ),
+
+          SizedBox(height: 10.h),
+
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Expanded(
+                child: _ColorChoiceButton(
+                  title: 'أبيض',
+                  selected: shareTextIsWhite,
+                  previewColor: Colors.white,
+                  onTap: () => onChangeTextColor(true),
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _ColorChoiceButton(
+                  title: 'أسود',
+                  selected: !shareTextIsWhite,
+                  previewColor: Colors.black,
+                  onTap: () => onChangeTextColor(false),
+                ),
+              ),
+            ],
+          ),
+
+          SizedBox(height: 12.h),
+
+          _ShareSliderControl(
+            title: 'حجم الخط',
+            valueText: shareFontSize.toStringAsFixed(0),
+            value: shareFontSize,
+            min: 13,
+            max: 24,
+            divisions: 11,
+            onChangeEnd: onChangeFontSize,
+          ),
+
+          SizedBox(height: 6.h),
+
+          _ShareSliderControl(
+            title: 'التباعد بين العنوان والتهنئة',
+            valueText: titleGreetingSpacing.toStringAsFixed(0),
+            value: titleGreetingSpacing,
+            min: 0,
+            max: 34,
+            divisions: 17,
+            onChangeEnd: onChangeSpacing,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ColorChoiceButton extends StatelessWidget {
+  const _ColorChoiceButton({
+    required this.title,
+    required this.selected,
+    required this.previewColor,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool selected;
+  final Color previewColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Material(
+      color: selected
+          ? theme.colorScheme.primary
+          : theme.colorScheme.primary.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(14.r),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14.r),
+        child: Container(
+          height: large ? 36 : 42.h,
+          padding: EdgeInsets.symmetric(horizontal: large ? 10 : 10.w),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: large ? 14 : 16.w,
+                height: large ? 14 : 16.w,
+                decoration: BoxDecoration(
+                  color: previewColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? Colors.white : theme.colorScheme.outline,
+                    width: 1.2,
+                  ),
+                ),
+              ),
+              SizedBox(width: 7.w),
+              Text(
+                title,
+                style: AppTextStyles.caption(context).copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: selected ? Colors.white : theme.colorScheme.primary,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShareSliderControl extends StatefulWidget {
+  const _ShareSliderControl({
+    required this.title,
+    required this.valueText,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.onChangeEnd,
+  });
+
+  final String title;
+  final String valueText;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final ValueChanged<double> onChangeEnd;
+
+  @override
+  State<_ShareSliderControl> createState() => _ShareSliderControlState();
+}
+
+class _ShareSliderControlState extends State<_ShareSliderControl> {
+  late double _draftValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _draftValue = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ShareSliderControl oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.value != widget.value && _draftValue != widget.value) {
+      _draftValue = widget.value;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Expanded(
+              child: Text(
+                widget.title,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.caption(context).copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: theme.colorScheme.surface,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: large ? 8 : 8.w,
+                vertical: large ? 3 : 3.h,
+              ),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(20.r),
+              ),
+              child: Text(
+                _draftValue.toStringAsFixed(0),
+                style: AppTextStyles.caption(context).copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.primary,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        Slider(
+          value: _draftValue,
+          min: widget.min,
+          max: widget.max,
+          divisions: widget.divisions,
+          onChanged: (value) {
+            setState(() {
+              _draftValue = value;
+            });
+          },
+          onChangeEnd: widget.onChangeEnd,
+        ),
+      ],
+    );
+  }
+}
+
+class _ShareImageCard extends StatelessWidget {
+  const _ShareImageCard({
+    required this.title,
+    required this.greeting,
+    required this.imageBackgroundPath,
+    required this.pickedBackgroundFile,
+    required this.colorBackground,
+    required this.backgroundMode,
+    required this.shareTextIsWhite,
+    required this.shareFontSize,
+    required this.titleGreetingSpacing,
+  });
+
+  final String title;
+  final String greeting;
+  final String imageBackgroundPath;
+  final File? pickedBackgroundFile;
+  final Color colorBackground;
+  final _ShareBackgroundMode backgroundMode;
+
+  final bool shareTextIsWhite;
+  final double shareFontSize;
+  final double titleGreetingSpacing;
+
+  bool get _isImageMode => backgroundMode == _ShareBackgroundMode.image;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool large = _eventDetailsLargeScreen(context);
+    final Color textColor = shareTextIsWhite ? Colors.white : Colors.black;
+    final double cardWidth = large ? 300 : 290.w;
+    final double cardHeight = large ? 300 : 360.h;
+    final double cardRadius = large ? 24 : 26.r;
+    final double cardPadding = large ? 20 : 24.w;
+    final double verticalPadding = large ? 20 : 24.h;
+    final double logoBox = large ? 34 : 36.w;
+    final double logoPadding = large ? 5 : 5.w;
+    final double titleFontSize = large
+        ? (shareFontSize + 1)
+        : (shareFontSize + 2).sp;
+    final double greetingFontSize = large ? shareFontSize : shareFontSize.sp;
+    final double spacing = large
+        ? titleGreetingSpacing
+        : titleGreetingSpacing.h;
+
+    final List<Shadow> textShadows = shareTextIsWhite
+        ? [Shadow(color: Colors.black.withOpacity(0.32), blurRadius: 6)]
+        : [Shadow(color: Colors.white.withOpacity(0.55), blurRadius: 6)];
+
+    return Container(
+      width: cardWidth,
+      height: cardHeight,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: colorBackground,
+        borderRadius: BorderRadius.circular(cardRadius),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_isImageMode && pickedBackgroundFile != null)
+            Image.file(
+              pickedBackgroundFile!,
+              fit: BoxFit.cover,
+              cacheWidth: 900,
+            )
+          else if (_isImageMode)
+            Image.asset(imageBackgroundPath, fit: BoxFit.cover, cacheWidth: 900)
+          else
+            Container(color: colorBackground),
+
+          if (!_isImageMode)
+            Positioned(
+              bottom: large ? 54 : 64.h,
+              right: large ? -12 : -14.w,
+              child: Icon(
+                Icons.nightlight_round,
+                color: Colors.white.withOpacity(0.09),
+                size: large ? 74 : 90.sp,
+              ),
+            ),
+
+          if (_isImageMode) Container(color: Colors.black.withOpacity(0.08)),
+
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: cardPadding,
+              vertical: verticalPadding,
+            ),
+            child: Column(
+              children: [
+                Expanded(
+                  child: Center(
+                    child: Directionality(
+                      textDirection: TextDirection.rtl,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            textAlign: TextAlign.center,
+                            textDirection: TextDirection.rtl,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'cairo',
+                              fontSize: titleFontSize,
+                              fontWeight: FontWeight.w900,
+                              color: textColor,
+                              height: 1.35,
+                              letterSpacing: 0,
+                              shadows: textShadows,
+                            ),
+                          ),
+
+                          SizedBox(height: spacing),
+
+                          if (greeting.trim().isNotEmpty)
+                            Text(
+                              greeting,
+                              textAlign: TextAlign.center,
+                              textDirection: TextDirection.rtl,
+                              maxLines: 5,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'cairo',
+                                fontSize: greetingFontSize,
+                                fontWeight: FontWeight.w800,
+                                color: textColor,
+                                height: 1.55,
+                                letterSpacing: 0,
+                                shadows: textShadows,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                Container(
+                  width: logoBox,
+                  height: logoBox,
+                  padding: EdgeInsets.all(logoPadding),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(large ? 11 : 12.r),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.10),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Image.asset(
+                    'assets/icons/koran (1).png',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+
+                SizedBox(height: large ? 6 : 7.h),
+
+                Text(
+                  'تذكير ومناسبات إسلامية',
+                  textAlign: TextAlign.center,
+                  style: AppTextStyles.caption(context).copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: textColor.withOpacity(0.92),
+                    letterSpacing: 0,
+                    shadows: textShadows,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShareActionButton extends StatelessWidget {
+  const _ShareActionButton({
+    required this.title,
+    required this.icon,
+    required this.onTap,
+    this.isPrimary = false,
+    this.isLoading = false,
+  });
+
+  final String title;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool isPrimary;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bool large = _eventDetailsLargeScreen(context);
+
+    final Color backgroundColor = isPrimary
+        ? theme.colorScheme.primary
+        : theme.colorScheme.secondary;
+
+    final Color foregroundColor = isPrimary
+        ? Colors.white
+        : theme.colorScheme.primary;
+
+    return SizedBox(
+      width: double.infinity,
+      child: Material(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(large ? 18 : 16.r),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(large ? 18 : 16.r),
+          splashColor: foregroundColor.withOpacity(0.10),
+          highlightColor: foregroundColor.withOpacity(0.06),
+          child: Container(
+            height: large ? 44 : 48.h,
+            padding: EdgeInsets.symmetric(horizontal: large ? 14 : 10.w),
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                textDirection: TextDirection.rtl,
+                children: [
+                  if (isLoading)
+                    SizedBox(
+                      width: large ? 20 : 17.w,
+                      height: large ? 20 : 17.w,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: foregroundColor,
+                      ),
+                    )
+                  else
+                    Icon(
+                      icon,
+                      color: foregroundColor,
+                      size: large ? 18 : 18.sp,
+                    ),
+                  SizedBox(width: large ? 8 : 7.w),
+                  Flexible(
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: TextDirection.rtl,
+                      locale: const Locale('ar'),
+                      style: AppTextStyles.caption(context).copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: isPrimary
+                            ? Colors.white
+                            : theme.colorScheme.surface,
+                        height: 1.2,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

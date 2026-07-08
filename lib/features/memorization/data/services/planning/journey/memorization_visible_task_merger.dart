@@ -1,0 +1,113 @@
+part of '../../memorization_plan_journey_engine.dart';
+
+class MemorizationVisibleTaskMerger {
+  const MemorizationVisibleTaskMerger();
+
+  List<MemorizationJourneyTask> mergeDailyLearningTasks(
+    List<MemorizationJourneyTask> tasks,
+  ) {
+    if (tasks.isEmpty) return const [];
+
+    final learningByDay = <String, List<MemorizationJourneyTask>>{};
+    final visibleTasks = <MemorizationJourneyTask>[];
+
+    for (final item in tasks) {
+      if (item.task.type != 'dailyNew') {
+        visibleTasks.add(item);
+        continue;
+      }
+
+      learningByDay.putIfAbsent(_dateKey(item.date), () => []).add(item);
+    }
+
+    for (final dayTasks in learningByDay.values) {
+      dayTasks.sort(
+        (a, b) =>
+            a.task.startGlobalAyahIndex.compareTo(b.task.startGlobalAyahIndex),
+      );
+      visibleTasks.add(_mergeDay(dayTasks));
+    }
+
+    visibleTasks.sort((a, b) {
+      final dateCompare = a.date.compareTo(b.date);
+      if (dateCompare != 0) return dateCompare;
+      return a.priority.compareTo(b.priority);
+    });
+    return visibleTasks;
+  }
+
+  MemorizationJourneyTask _mergeDay(List<MemorizationJourneyTask> dayTasks) {
+    final rangeSummary = const MemorizationActualRangeSummaryResolver()
+        .calculateActualAyahCount(
+          dayTasks.map(
+            (item) => MemorizationGlobalRange(
+              start: item.task.startGlobalAyahIndex,
+              end: item.task.endGlobalAyahIndex,
+            ),
+          ),
+        );
+    if (dayTasks.length == 1) {
+      final item = dayTasks.single;
+      return MemorizationJourneyTask(
+        task: item.task.copyWith(
+          title: 'حفظ اليوم',
+          subtitle:
+              '${rangeSummary.actualAyahCount} آية • ${rangeSummary.pageRangeLabel}',
+        ),
+        date: item.date,
+        timeLabel: 'حفظ اليوم',
+        priority: item.priority,
+        isProjected: item.isProjected,
+      );
+    }
+
+    final first = dayTasks.first;
+    final start = dayTasks
+        .map((item) => item.task.startGlobalAyahIndex)
+        .reduce(math.min);
+    final end = dayTasks
+        .map((item) => item.task.endGlobalAyahIndex)
+        .reduce(math.max);
+    final minutes = dayTasks.fold<int>(
+      0,
+      (sum, item) => sum + item.task.expectedMinutes,
+    );
+    final cleanDate = _dateOnly(first.date);
+    final mergedTask = MemorizationTodayTaskModel(
+      id:
+          'visible_daily_${first.task.planId}_'
+          '${cleanDate.year}${cleanDate.month}${cleanDate.day}_${start}_$end',
+      planId: first.task.planId,
+      type: 'dailyNew',
+      title: 'حفظ اليوم',
+      subtitle:
+          '${rangeSummary.actualAyahCount} آية • ${rangeSummary.pageRangeLabel}',
+      scopeTitle: first.task.scopeTitle,
+      startGlobalAyahIndex: start,
+      endGlobalAyahIndex: end,
+      expectedMinutes: minutes.clamp(8, 360).toInt(),
+      isCompleted: dayTasks.every((item) => item.task.isCompleted),
+      status: MemorizationTodayTaskModel.statusNotStarted,
+      scheduledDate: cleanDate,
+      createdAt: cleanDate,
+      updatedAt: cleanDate,
+    );
+
+    return MemorizationJourneyTask(
+      task: mergedTask,
+      date: cleanDate,
+      timeLabel: 'حفظ اليوم',
+      priority: dayTasks.map((item) => item.priority).reduce(math.min),
+      isProjected: dayTasks.every((item) => item.isProjected),
+    );
+  }
+
+  DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  String _dateKey(DateTime value) {
+    final date = _dateOnly(value);
+    return '${date.year}-${date.month}-${date.day}';
+  }
+}

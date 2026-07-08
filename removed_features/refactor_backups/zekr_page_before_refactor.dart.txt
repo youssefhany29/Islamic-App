@@ -1,0 +1,1554 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/shared/widgets/app_main_components/custom_app_bar.dart';
+import 'package:islamic_app/core/theme/app_typography.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+
+import 'package:islamic_app/features/azkar/presentation/widgets/zekr_category_card.dart';
+import 'package:islamic_app/features/azkar/presentation/widgets/zekr_daily_journey_card.dart';
+import 'package:islamic_app/features/azkar/presentation/widgets/zekr_memory_plan_card.dart';
+import 'package:islamic_app/features/azkar/presentation/widgets/zekr_review_calendar_card.dart';
+import 'package:islamic_app/features/azkar/presentation/widgets/zekr_tasbeeh_preview_card.dart';
+import 'package:islamic_app/features/azkar/presentation/widgets/zekr_today_review_card.dart';
+import 'package:islamic_app/features/azkar/presentation/pages/zekr_item_details_page.dart';
+import 'package:islamic_app/features/azkar/presentation/pages/zekr_memory_analytics_page.dart';
+import 'package:islamic_app/features/azkar/presentation/pages/zekr_reading_page.dart';
+import 'package:islamic_app/features/azkar/presentation/pages/zekr_today_review_page.dart';
+import 'package:islamic_app/features/azkar/presentation/adaptive/zekr_tablet_fold_layout.dart' as zekr_adaptive;
+import 'package:islamic_app/features/azkar/data/datasources/zekr_local_data.dart';
+import 'package:islamic_app/features/azkar/data/models/zekr_category_model.dart';
+import 'package:islamic_app/features/azkar/data/models/zekr_item_model.dart';
+import 'package:islamic_app/features/azkar/data/services/zekr_memory_plan_preferences.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+class ZekrPage extends StatefulWidget {
+  const ZekrPage({super.key});
+
+  @override
+  State<ZekrPage> createState() => _ZekrPageState();
+}
+
+class _ZekrSearchResult {
+  const _ZekrSearchResult({
+    required this.category,
+    required this.item,
+    required this.score,
+  });
+
+  final ZekrCategoryModel category;
+  final ZekrItemModel item;
+  final int score;
+}
+
+class _ZekrPageState extends State<ZekrPage> {
+  final ZekrMemoryPlanPreferences _memoryPlanPreferences =
+  const ZekrMemoryPlanPreferences();
+
+  final TextEditingController _searchController = TextEditingController();
+
+  bool _memoryPlanEnabled = false;
+  bool _memoryPlanLoading = true;
+  bool _memoryPlanChanging = false;
+  String _searchQuery = '';
+  int _reviewCalendarRefreshTick = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMemoryPlanState();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMemoryPlanState() async {
+    final enabled = await _memoryPlanPreferences.isEnabled();
+
+    if (!mounted) return;
+
+    setState(() {
+      _memoryPlanEnabled = enabled;
+      _memoryPlanLoading = false;
+      _reviewCalendarRefreshTick++;
+    });
+  }
+
+  void _refreshReviewCalendar() {
+    if (!mounted) return;
+
+    setState(() {
+      _reviewCalendarRefreshTick++;
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value;
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() {
+      _searchQuery = '';
+    });
+  }
+
+  String _normalizeArabic(String input) {
+    return input
+        .toLowerCase()
+        .replaceAll(
+      RegExp(r'[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]'),
+      '',
+    )
+        .replaceAll('ـ', '')
+        .replaceAll('أ', 'ا')
+        .replaceAll('إ', 'ا')
+        .replaceAll('آ', 'ا')
+        .replaceAll('ٱ', 'ا')
+        .replaceAll('ى', 'ي')
+        .replaceAll('ئ', 'ي')
+        .replaceAll('ؤ', 'و')
+        .replaceAll('ة', 'ه')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _normalizedWords(String input) {
+    return _normalizeArabic(input)
+        .split(' ')
+        .where((word) => word.trim().isNotEmpty)
+        .toList();
+  }
+
+  int _searchScore({
+    required ZekrCategoryModel category,
+    required ZekrItemModel item,
+    required String query,
+  }) {
+    final normalizedQuery = _normalizeArabic(query);
+    if (normalizedQuery.isEmpty) return 999;
+
+    final title = _normalizeArabic(item.title ?? '');
+    final categoryTitle = _normalizeArabic(category.title);
+    final text = _normalizeArabic(item.text);
+    final benefit = _normalizeArabic(item.benefit ?? '');
+    final reference = _normalizeArabic(item.reference ?? '');
+    final source = _normalizeArabic(item.source ?? '');
+
+    final allText = '$title $categoryTitle $text $benefit $reference $source';
+
+    if (title.startsWith(normalizedQuery) ||
+        categoryTitle.startsWith(normalizedQuery)) {
+      return 0;
+    }
+
+    final words = _normalizedWords(allText);
+    if (words.any((word) => word.startsWith(normalizedQuery))) {
+      return 1;
+    }
+
+    if (allText.contains(normalizedQuery)) {
+      return 2;
+    }
+
+    return 999;
+  }
+
+  List<_ZekrSearchResult> _searchResultsFor(String query) {
+    final normalizedQuery = _normalizeArabic(query);
+    if (normalizedQuery.isEmpty) return [];
+
+    final List<_ZekrSearchResult> results = [];
+
+    for (final category in ZekrLocalData.categories) {
+      final items = ZekrLocalData.getBuiltInItems(category.id);
+
+      for (final item in items) {
+        final score = _searchScore(
+          category: category,
+          item: item,
+          query: normalizedQuery,
+        );
+
+        if (score == 999) continue;
+
+        results.add(
+          _ZekrSearchResult(
+            category: category,
+            item: item,
+            score: score,
+          ),
+        );
+      }
+    }
+
+    results.sort((a, b) {
+      final scoreCompare = a.score.compareTo(b.score);
+      if (scoreCompare != 0) return scoreCompare;
+
+      final countCompare = a.item.count.compareTo(b.item.count);
+      if (countCompare != 0) return countCompare;
+
+      return (a.item.title ?? a.category.title).compareTo(
+        b.item.title ?? b.category.title,
+      );
+    });
+
+    return results;
+  }
+
+  Future<void> _openSearchResult(_ZekrSearchResult result) async {
+    AppHaptics.tap(context);
+
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return ZekrItemDetailsPage(
+            category: result.category,
+            item: result.item,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 240),
+        reverseTransitionDuration: const Duration(milliseconds: 190),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curvedAnimation = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+
+          return FadeTransition(
+            opacity: curvedAnimation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.045),
+                end: Offset.zero,
+              ).animate(curvedAnimation),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+
+    if (!mounted) return;
+
+    _refreshReviewCalendar();
+  }
+
+  Future<void> _setMemoryPlanEnabled(bool value) async {
+    if (_memoryPlanChanging) return;
+
+    setState(() {
+      _memoryPlanChanging = true;
+    });
+
+    await _memoryPlanPreferences.setEnabled(value);
+
+    if (!mounted) return;
+
+    setState(() {
+      _memoryPlanEnabled = value;
+      _memoryPlanChanging = false;
+      _reviewCalendarRefreshTick++;
+    });
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        elevation: 0,
+        margin: EdgeInsets.only(
+          left: 24.w,
+          right: 24.w,
+          bottom: 18.h,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        content: Text(
+          value ? 'تم تفعيل خطة الحفظ' : 'تم إيقاف خطة الحفظ',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: AppTextStyles.caption(context).copyWith(
+color: Colors.white,
+            fontWeight: FontWeight.w600
+),
+        ),
+        duration: const Duration(milliseconds: 1400),
+      ),
+    );
+  }
+
+  Future<void> _openCategory(ZekrCategoryModel category) async {
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return ZekrReadingPage(category: category);
+        },
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    if (!mounted) return;
+
+    _refreshReviewCalendar();
+  }
+
+  Future<void> _openTodayReview() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ZekrTodayReviewPage(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    _refreshReviewCalendar();
+  }
+
+  Future<void> _openAnalytics() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ZekrMemoryAnalyticsPage(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    _refreshReviewCalendar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<ZekrCategoryModel> categories = ZekrLocalData.categories;
+    final bool isSearching = _searchQuery.trim().isNotEmpty;
+    final List<_ZekrSearchResult> searchResults =
+    isSearching ? _searchResultsFor(_searchQuery) : [];
+
+    final Size size = MediaQuery.sizeOf(context);
+
+    final bool isTablet = size.shortestSide >= 600;
+    final bool isUnfoldedFold =
+        size.width >= 700 && size.height >= 500 && size.shortestSide < 600;
+
+    final bool isLargeScreen = isTablet || isUnfoldedFold;
+
+    final Widget searchField = _ZekrSearchField(
+      controller: _searchController,
+      value: _searchQuery,
+      onChanged: _onSearchChanged,
+      onClear: _clearSearch,
+      large: isLargeScreen,
+    );
+
+    final Widget largeContentBelowSearch = isSearching
+        ? _ZekrLargeSearchResultsSection(
+      query: _searchQuery,
+      searchResults: searchResults,
+      onOpenSearchResult: _openSearchResult,
+    )
+        : ZekrLargeCategoriesGrid(
+      categories: categories,
+      onOpenCategory: _openCategory,
+    );
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      appBar: const CustomAppBar(
+        category: CustomAppBarCategory(text: 'أذكار'),
+      ),
+      body: SafeArea(
+        child: isLargeScreen
+            ? zekr_adaptive.ZekrTabletFoldLayout(
+          memoryPlanLoading: _memoryPlanLoading,
+          memoryPlanEnabled: _memoryPlanEnabled,
+          memoryPlanChanging: _memoryPlanChanging,
+          reviewCalendarRefreshTick: _reviewCalendarRefreshTick,
+          onMemoryPlanChanged: _setMemoryPlanEnabled,
+          onOpenAnalytics: _openAnalytics,
+          onOpenTodayReview: _openTodayReview,
+          searchField: searchField,
+          contentBelowSearch: largeContentBelowSearch,
+        )
+            : _PhoneZekrBody(
+          memoryPlanLoading: _memoryPlanLoading,
+          memoryPlanEnabled: _memoryPlanEnabled,
+          memoryPlanChanging: _memoryPlanChanging,
+          reviewCalendarRefreshTick: _reviewCalendarRefreshTick,
+          onMemoryPlanChanged: _setMemoryPlanEnabled,
+          onOpenAnalytics: _openAnalytics,
+          onOpenTodayReview: _openTodayReview,
+          isSearching: isSearching,
+          searchResults: searchResults,
+          categories: categories,
+          searchField: searchField,
+          searchQuery: _searchQuery,
+          onOpenSearchResult: _openSearchResult,
+          onOpenCategory: _openCategory,
+        ),
+      ),
+    );
+  }
+}
+
+class _PhoneZekrBody extends StatelessWidget {
+  const _PhoneZekrBody({
+    required this.memoryPlanLoading,
+    required this.memoryPlanEnabled,
+    required this.memoryPlanChanging,
+    required this.reviewCalendarRefreshTick,
+    required this.onMemoryPlanChanged,
+    required this.onOpenAnalytics,
+    required this.onOpenTodayReview,
+    required this.isSearching,
+    required this.searchResults,
+    required this.categories,
+    required this.searchField,
+    required this.searchQuery,
+    required this.onOpenSearchResult,
+    required this.onOpenCategory,
+  });
+
+  final bool memoryPlanLoading;
+  final bool memoryPlanEnabled;
+  final bool memoryPlanChanging;
+  final int reviewCalendarRefreshTick;
+  final ValueChanged<bool> onMemoryPlanChanged;
+  final VoidCallback onOpenAnalytics;
+  final VoidCallback onOpenTodayReview;
+  final bool isSearching;
+  final List<_ZekrSearchResult> searchResults;
+  final List<ZekrCategoryModel> categories;
+  final Widget searchField;
+  final String searchQuery;
+  final ValueChanged<_ZekrSearchResult> onOpenSearchResult;
+  final ValueChanged<ZekrCategoryModel> onOpenCategory;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: EdgeInsets.fromLTRB(14.w, 8.h, 14.w, 18.h),
+      physics: const BouncingScrollPhysics(),
+      children: [
+        const ZekrDailyJourneyCard(),
+        SizedBox(height: 12.h),
+        if (memoryPlanLoading)
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: 18.h),
+            child: const Center(child: CircularProgressIndicator()),
+          )
+        else ...[
+          ZekrMemoryPlanCard(
+            enabled: memoryPlanEnabled,
+            isChanging: memoryPlanChanging,
+            onChanged: onMemoryPlanChanged,
+          ),
+          if (memoryPlanEnabled) ...[
+            SizedBox(height: 12.h),
+            _MemoryAnalyticsEntryCard(
+              onTap: onOpenAnalytics,
+            ),
+            SizedBox(height: 12.h),
+            ZekrTodayReviewCard(
+              onTap: onOpenTodayReview,
+            ),
+            SizedBox(height: 12.h),
+            ZekrReviewCalendarCard(
+              refreshTick: reviewCalendarRefreshTick,
+              onOpenTodayReview: onOpenTodayReview,
+            ),
+          ],
+        ],
+        SizedBox(height: 12.h),
+        Text(
+          'رحلة الذكر',
+          textAlign: TextAlign.right,
+          textDirection: TextDirection.rtl,
+          style: AppTypography.pageHeader(
+            context,
+            color: Theme.of(context).colorScheme.surface,
+          ),
+        ),
+        SizedBox(height: 8.h),
+        searchField,
+        SizedBox(height: 10.h),
+        if (isSearching) ...[
+          if (searchResults.isEmpty)
+            _NoSearchResultsCard(
+              query: searchQuery,
+            )
+          else ...[
+            _SearchResultsHeader(
+              query: searchQuery,
+              count: searchResults.length,
+            ),
+            SizedBox(height: 8.h),
+            ...searchResults.map(
+                  (result) {
+                return Padding(
+                  padding: EdgeInsets.only(bottom: 10.h),
+                  child: _ZekrSearchResultCard(
+                    result: result,
+                    onTap: () => onOpenSearchResult(result),
+                  ),
+                );
+              },
+            ),
+          ],
+        ] else
+          ...categories.map(
+                (category) {
+              return Padding(
+                padding: EdgeInsets.only(bottom: 10.h),
+                child: ZekrCategoryCard(
+                  category: category,
+                  onTap: () => onOpenCategory(category),
+                ),
+              );
+            },
+          ),
+        SizedBox(height: 2.h),
+        const ZekrTasbeehPreviewCard(),
+      ],
+    );
+  }
+}
+
+class _SearchResultsHeader extends StatelessWidget {
+  const _SearchResultsHeader({
+    required this.query,
+    required this.count,
+    this.large = false,
+  });
+
+  final String query;
+  final int count;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(
+          horizontal: large ? 16 : 12.w,
+          vertical: large ? 12 : 9.h,
+        ),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(large ? 18 : 14.r),
+          border: Border.all(
+            color: theme.colorScheme.primary.withOpacity(0.12),
+          ),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Icon(
+              Icons.search_rounded,
+              color: theme.colorScheme.primary,
+              size: large ? 24 : 18.sp,
+            ),
+            SizedBox(width: large ? 10 : 8.w),
+            Expanded(
+              child: Text(
+                'نتائج البحث عن "$query" — $count نتيجة',
+                textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.body(context).copyWith(
+fontWeight: FontWeight.w700,
+                  color: theme.colorScheme.surface.withOpacity(0.70),
+                  height: 1.4
+),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ZekrSearchResultCard extends StatelessWidget {
+  const _ZekrSearchResultCard({
+    required this.result,
+    required this.onTap,
+    this.large = false,
+  });
+
+  final _ZekrSearchResult result;
+  final VoidCallback onTap;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final item = result.item;
+    final category = result.category;
+
+    final double radius = large ? 22 : 18.r;
+    final double padding = large ? 16 : 12.w;
+    final double iconSize = large ? 52 : 42.w;
+    final double titleSize = large ? 18 : 12.sp;
+    final double categorySize = large ? 13 : 9.2.sp;
+    final double bodySize = large ? 14 : 10.5.sp;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(radius),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(radius),
+          splashColor: theme.colorScheme.primary.withOpacity(0.10),
+          highlightColor: theme.colorScheme.primary.withOpacity(0.06),
+          child: Ink(
+            width: double.infinity,
+            padding: EdgeInsets.all(padding),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondary,
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(
+                  isDark ? 0.18 : 0.38,
+                ),
+              ),
+            ),
+            child: Row(
+              textDirection: TextDirection.rtl,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: iconSize,
+                  height: iconSize,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withOpacity(
+                      isDark ? 0.22 : 0.09,
+                    ),
+                    borderRadius: BorderRadius.circular(large ? 16 : 14.r),
+                  ),
+                  child: Icon(
+                    item.isQuranVerse
+                        ? Icons.auto_stories_rounded
+                        : Icons.menu_book_rounded,
+                    color: theme.colorScheme.primary,
+                    size: large ? 28 : 21.sp,
+                  ),
+                ),
+                SizedBox(width: large ? 12 : 10.w),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        item.title ?? category.title,
+                        textAlign: TextAlign.right,
+                        textDirection: TextDirection.rtl,
+                        locale: const Locale('ar'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: titleSize,
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.surface,
+                          height: 1.35,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      SizedBox(height: large ? 4 : 3.h),
+                      Text(
+                        category.title,
+                        textAlign: TextAlign.right,
+                        textDirection: TextDirection.rtl,
+                        locale: const Locale('ar'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: categorySize,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.primary,
+                          height: 1.35,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      SizedBox(height: large ? 8 : 5.h),
+                      Text(
+                        item.text,
+                        textAlign: TextAlign.right,
+                        textDirection: TextDirection.rtl,
+                        locale: const Locale('ar'),
+                        maxLines: large ? 4 : 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: bodySize,
+                          fontWeight: FontWeight.w500,
+                          color: theme.colorScheme.surface.withOpacity(0.70),
+                          height: 1.55,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      SizedBox(height: large ? 10 : 8.h),
+                      Row(
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          _SearchBadge(
+                            text: '${item.count <= 0 ? 1 : item.count} مرة',
+                            icon: Icons.repeat_rounded,
+                            large: large,
+                          ),
+                          if (item.reference != null &&
+                              item.reference!.trim().isNotEmpty) ...[
+                            SizedBox(width: large ? 9 : 7.w),
+                            Expanded(
+                              child: Text(
+                                item.reference!,
+                                textAlign: TextAlign.right,
+                                textDirection: TextDirection.rtl,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.surface
+                                      .withOpacity(0.48)
+),
+                              ),
+                            ),
+                          ] else
+                            const Spacer(),
+                          SizedBox(width: large ? 10 : 8.w),
+                          Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            color: theme.colorScheme.primary,
+                            size: large ? 16 : 13.sp,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchBadge extends StatelessWidget {
+  const _SearchBadge({
+    required this.text,
+    required this.icon,
+    this.large = false,
+  });
+
+  final String text;
+  final IconData icon;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: large ? 10 : 8.w,
+        vertical: large ? 5 : 4.h,
+      ),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(30.r),
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: color,
+            size: large ? 15 : 12.sp,
+          ),
+          SizedBox(width: large ? 5 : 4.w),
+          Text(
+            text,
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+              color: color,
+              letterSpacing: 0
+),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ZekrSearchField extends StatelessWidget {
+  const _ZekrSearchField({
+    required this.controller,
+    required this.value,
+    required this.onChanged,
+    required this.onClear,
+    this.large = false,
+  });
+
+  final TextEditingController controller;
+  final String value;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        textAlign: TextAlign.right,
+        textDirection: TextDirection.rtl,
+        cursorColor: theme.colorScheme.primary,
+        style: AppTypography.searchField(
+          context,
+          color: theme.colorScheme.surface,
+        ),
+        decoration: InputDecoration(
+          hintText: 'ابحث عن ذكر أو دعاء...',
+          hintTextDirection: TextDirection.rtl,
+          prefixIcon: value.trim().isEmpty
+              ? Icon(
+            Icons.search_rounded,
+            color: theme.colorScheme.primary,
+            size: large ? 26 : 21.sp,
+          )
+              : IconButton(
+            onPressed: onClear,
+            icon: Icon(
+              Icons.close_rounded,
+              color: theme.colorScheme.primary,
+              size: large ? 24 : 20.sp,
+            ),
+          ),
+          filled: true,
+          fillColor: theme.colorScheme.secondary,
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: large ? 18 : 12.w,
+            vertical: large ? 16 : 11.h,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(large ? 22 : 16.r),
+            borderSide: BorderSide(
+              color: theme.colorScheme.outline.withOpacity(
+                isDark ? 0.20 : 0.34,
+              ),
+            ),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(large ? 22 : 16.r),
+            borderSide: BorderSide(
+              color: theme.colorScheme.outline.withOpacity(
+                isDark ? 0.20 : 0.34,
+              ),
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(large ? 22 : 16.r),
+            borderSide: BorderSide(
+              color: theme.colorScheme.primary.withOpacity(0.70),
+              width: 1.1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NoSearchResultsCard extends StatelessWidget {
+  const _NoSearchResultsCard({
+    required this.query,
+    this.large = false,
+  });
+
+  final String query;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(large ? 18 : 14.w),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.secondary,
+          borderRadius: BorderRadius.circular(large ? 22 : 18.r),
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(0.30),
+          ),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Icon(
+              Icons.search_off_rounded,
+              color: theme.colorScheme.primary,
+              size: large ? 28 : 24.sp,
+            ),
+            SizedBox(width: large ? 12 : 10.w),
+            Expanded(
+              child: Text(
+                'لا توجد نتائج لـ "$query"',
+                textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
+                style: AppTextStyles.body(context).copyWith(
+fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.surface.withOpacity(0.70),
+                  height: 1.45
+),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MemoryAnalyticsEntryCard extends StatelessWidget {
+  const _MemoryAnalyticsEntryCard({
+    required this.onTap,
+    this.large = false,
+  });
+
+  final VoidCallback onTap;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final double radius = large ? 22 : 18.r;
+    final double padding = large ? 15 : 13.w;
+    final double iconBox = large ? 38 : 39.w;
+    final double iconSize = large ? 20 : 21.sp;
+    final double arrowBox = large ? 27 : 28.w;
+    final double arrowSize = large ? 15 : 17.sp;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(radius),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(radius),
+          child: Ink(
+            padding: EdgeInsets.all(padding),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondary,
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.30),
+              ),
+            ),
+            child: Row(
+              textDirection: TextDirection.rtl,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: iconBox,
+                  height: iconBox,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(large ? 14 : 14.r),
+                  ),
+                  child: Icon(
+                    Icons.insights_rounded,
+                    color: theme.colorScheme.primary,
+                    size: iconSize,
+                  ),
+                ),
+                SizedBox(width: large ? 10 : 10.w),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: Text(
+                          'تحليل الحفظ',
+                          textAlign: TextAlign.right,
+                          textDirection: TextDirection.rtl,
+                          locale: const Locale('ar'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.cardTitle(
+                            context,
+                            fontWeight: FontWeight.w700,
+                            color: theme.colorScheme.surface,
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: large ? 4 : 3.h),
+                      SizedBox(
+                        width: double.infinity,
+                        child: Text(
+                          'تابع الأذكار المحفوظة واللي محتاجة مراجعة.',
+                          textAlign: TextAlign.right,
+                          textDirection: TextDirection.rtl,
+                          locale: const Locale('ar'),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.cardSubtitle(
+                            context,
+                            fontWeight: FontWeight.w400,
+                            color: theme.colorScheme.surface.withOpacity(0.62),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: large ? 8 : 8.w),
+                Container(
+                  width: arrowBox,
+                  height: arrowBox,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(large ? 10 : 9.r),
+                  ),
+                  child: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: theme.colorScheme.primary,
+                    size: arrowSize,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ZekrLargeSearchResultsSection extends StatelessWidget {
+  const _ZekrLargeSearchResultsSection({
+    required this.query,
+    required this.searchResults,
+    required this.onOpenSearchResult,
+  });
+
+  final String query;
+  final List<_ZekrSearchResult> searchResults;
+  final ValueChanged<_ZekrSearchResult> onOpenSearchResult;
+
+  @override
+  Widget build(BuildContext context) {
+    if (searchResults.isEmpty) {
+      return _NoSearchResultsCard(
+        query: query,
+        large: true,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SearchResultsHeader(
+          query: query,
+          count: searchResults.length,
+          large: true,
+        ),
+        const SizedBox(height: 12),
+        for (final result in searchResults)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _ZekrSearchResultCard(
+              result: result,
+              large: true,
+              onTap: () => onOpenSearchResult(result),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class ZekrLargeCategoriesGrid extends StatelessWidget {
+  const ZekrLargeCategoriesGrid({
+    super.key,
+    required this.categories,
+    required this.onOpenCategory,
+  });
+
+  final List<ZekrCategoryModel> categories;
+  final ValueChanged<ZekrCategoryModel> onOpenCategory;
+
+  bool _isPrivateCategory(ZekrCategoryModel category) {
+    return category.id.contains('custom') ||
+        category.id.contains('private') ||
+        category.title.contains('خاص');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Size size = MediaQuery.sizeOf(context);
+    final bool isFold = size.width >= 600 && size.shortestSide < 600;
+    final bool isLandscape = size.width > size.height;
+
+    const int columns = 3;
+    final double gap = isFold ? 12 : 16;
+
+    final double cardHeight = isLandscape
+        ? 168
+        : isFold
+        ? 174
+        : 186;
+
+    final ZekrCategoryModel? privateCategory = categories
+        .where(_isPrivateCategory)
+        .cast<ZekrCategoryModel?>()
+        .firstWhere(
+          (category) => category != null,
+      orElse: () => null,
+    );
+
+    final List<ZekrCategoryModel> normalCategories = categories
+        .where((category) => !_isPrivateCategory(category))
+        .toList(growable: false);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double cardWidth =
+            (constraints.maxWidth - (gap * (columns - 1))) / columns;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              textDirection: TextDirection.rtl,
+              spacing: gap,
+              runSpacing: gap,
+              children: [
+                for (final category in normalCategories)
+                  SizedBox(
+                    width: cardWidth,
+                    height: cardHeight,
+                    child: _LargeZekrCategoryCard(
+                      category: category,
+                      onTap: () => onOpenCategory(category),
+                    ),
+                  ),
+              ],
+            ),
+            if (privateCategory != null) ...[
+              SizedBox(height: gap),
+              SizedBox(
+                height: cardHeight,
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      width: cardWidth,
+                      child: _LargeZekrCategoryCard(
+                        category: privateCategory,
+                        onTap: () => onOpenCategory(privateCategory),
+                      ),
+                    ),
+                    SizedBox(width: gap),
+                    const Expanded(
+                      child: _LargeQuickTasbeehCard(),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              SizedBox(height: gap),
+              SizedBox(
+                width: double.infinity,
+                height: cardHeight,
+                child: const _LargeQuickTasbeehCard(),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LargeQuickTasbeehCard extends StatefulWidget {
+  const _LargeQuickTasbeehCard();
+
+  @override
+  State<_LargeQuickTasbeehCard> createState() => _LargeQuickTasbeehCardState();
+}
+
+class _LargeQuickTasbeehCardState extends State<_LargeQuickTasbeehCard> {
+  int counter = 0;
+
+  void _increment() {
+    AppHaptics.tap(context);
+
+    setState(() {
+      counter++;
+    });
+  }
+
+  void _reset() {
+    AppHaptics.tap(context);
+
+    setState(() {
+      counter = 0;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(22),
+        child: Ink(
+          width: double.infinity,
+          height: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondary,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(
+                isDark ? 0.18 : 0.36,
+              ),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(isDark ? 0.10 : 0.035),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              Align(
+                alignment: Alignment.topRight,
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(
+                          isDark ? 0.24 : 0.10,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        Icons.radio_button_checked_rounded,
+                        color: theme.colorScheme.primary,
+                        size: 23,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              'تسبيح سريع',
+                              textAlign: TextAlign.right,
+                              textDirection: TextDirection.rtl,
+                              locale: const Locale('ar'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTypography.cardTitle(
+                                context,
+                                fontWeight: FontWeight.w900,
+                                color: theme.colorScheme.surface,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              'اضغط على الزر للتسبيح بسرعة من الصفحة.',
+                              textAlign: TextAlign.right,
+                              textDirection: TextDirection.rtl,
+                              locale: const Locale('ar'),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTypography.cardSubtitle(
+                                context,
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.surface.withOpacity(0.62),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Align(
+                alignment: Alignment.bottomRight,
+                child: Text(
+                  '$counter',
+                  textDirection: TextDirection.rtl,
+                  style: AppTextStyles.display(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.primary,
+                    height: 1.0
+),
+                ),
+              ),
+              Align(
+                alignment: Alignment.bottomLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    ElevatedButton(
+                      onPressed: _increment,
+                      style: ElevatedButton.styleFrom(
+                        elevation: 0,
+                        backgroundColor: theme.colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 10,
+                        ),
+                        minimumSize: const Size(0, 42),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        'سبحان الله',
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton(
+                      onPressed: _reset,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: theme.colorScheme.primary,
+                        side: BorderSide(
+                          color: theme.colorScheme.primary.withOpacity(0.45),
+                          width: 1,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 10,
+                        ),
+                        minimumSize: const Size(0, 42),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        'تصفير',
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+class _LargeZekrCategoryCard extends StatelessWidget {
+  const _LargeZekrCategoryCard({
+    required this.category,
+    required this.onTap,
+  });
+
+  final ZekrCategoryModel category;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(22),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          splashColor: theme.colorScheme.primary.withOpacity(0.10),
+          highlightColor: theme.colorScheme.primary.withOpacity(0.06),
+          child: Ink(
+            width: double.infinity,
+            height: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondary,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(
+                  isDark ? 0.18 : 0.36,
+                ),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.10 : 0.035),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  textDirection: TextDirection.rtl,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(
+                          isDark ? 0.24 : 0.10,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        category.icon,
+                        color: theme.colorScheme.primary,
+                        size: 23,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Text(
+                                category.title,
+                                textAlign: TextAlign.right,
+                                textDirection: TextDirection.rtl,
+                                locale: const Locale('ar'),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTypography.cardTitle(
+                                  context,
+                                  fontWeight: FontWeight.w900,
+                                  color: theme.colorScheme.surface,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Text(
+                                category.subtitle,
+                                textAlign: TextAlign.right,
+                                textDirection: TextDirection.rtl,
+                                locale: const Locale('ar'),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTypography.cardSubtitle(
+                                  context,
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.surface
+                                      .withOpacity(0.66),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: theme.colorScheme.primary,
+                    size: 17,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

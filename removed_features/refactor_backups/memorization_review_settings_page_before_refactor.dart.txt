@@ -1,0 +1,1107 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:islamic_app/shared/widgets/app_main_components/custom_app_bar.dart';
+import 'package:islamic_app/core/services/app_haptics.dart';
+
+import 'package:islamic_app/features/memorization/presentation/widgets/mastery_primary_button.dart';
+import 'package:islamic_app/features/memorization/presentation/widgets/mastery_snack_bar.dart';
+import 'package:islamic_app/features/memorization/data/models/memorization_action_type.dart';
+import 'package:islamic_app/features/memorization/data/models/memorization_scope_selection.dart';
+import 'package:islamic_app/features/memorization/data/models/memorization_user_type.dart';
+import 'package:islamic_app/features/memorization/data/services/quran_memorization_scope_calculator.dart';
+import 'memorization_goal_page.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+class MemorizationReviewSettingsPage extends StatefulWidget {
+  const MemorizationReviewSettingsPage({
+    super.key,
+    required this.userType,
+    required this.actionType,
+    required this.mainScopeSelection,
+  });
+
+  final MemorizationUserType userType;
+  final MemorizationActionType actionType;
+  final MemorizationScopeSelection mainScopeSelection;
+
+  @override
+  State<MemorizationReviewSettingsPage> createState() =>
+      _MemorizationReviewSettingsPageState();
+}
+
+class _MemorizationReviewSettingsPageState
+    extends State<MemorizationReviewSettingsPage> {
+  final QuranScopeCalculator calculator = const QuranScopeCalculator();
+
+  int reviewEveryDays = 2;
+  bool smartReviewDistribution = true;
+
+  _ReviewScopeKind reviewScopeKind = _ReviewScopeKind.juz;
+  int selectedReviewSurah = 1;
+  int selectedReviewJuz = 30;
+  int selectedReviewHizb = 60;
+
+  _ReviewDistributionMode distributionMode = _ReviewDistributionMode.sessions;
+  final TextEditingController reviewSessionsController =
+  TextEditingController(text: '5');
+  final TextEditingController reviewPagesController =
+  TextEditingController(text: '1');
+
+  @override
+  void dispose() {
+    reviewSessionsController.dispose();
+    reviewPagesController.dispose();
+    super.dispose();
+  }
+
+  int? _reviewTargetSessionsValue() {
+    if (distributionMode != _ReviewDistributionMode.sessions) return null;
+
+    final value = int.tryParse(reviewSessionsController.text.trim());
+    if (value == null || value <= 0) return null;
+
+    return value.clamp(1, 999).toInt();
+  }
+
+  double? _reviewDailyPagesValue() {
+    if (distributionMode != _ReviewDistributionMode.pagesPerSession) {
+      return null;
+    }
+
+    final normalized = reviewPagesController.text.trim().replaceAll(',', '.');
+    final value = double.tryParse(normalized);
+    if (value == null || value <= 0) return null;
+
+    return value.clamp(0.25, 30).toDouble();
+  }
+
+  bool get isBeginner {
+    return widget.userType == MemorizationUserType.beginner;
+  }
+
+  bool get isBeginnerNewWithReview {
+    return isBeginner &&
+        widget.actionType == MemorizationActionType.newWithReview;
+  }
+
+  bool get needsSeparateReviewScope {
+    return widget.actionType == MemorizationActionType.newWithReview &&
+        !isBeginner;
+  }
+
+  bool get _reviewFromLearnedOnly {
+    // المبتدئ يراجع ما حفظه داخل الخطة فقط.
+    // من حفظ سابقًا يختار نطاق مراجعة مستقل؛ لا نعرض اختيارًا يربكه.
+    return !needsSeparateReviewScope;
+  }
+
+  String get _title {
+    if (widget.actionType == MemorizationActionType.newWithReview) {
+      return isBeginner ? 'إعداد المراجعة' : 'تحديد محفوظ المراجعة';
+    }
+
+    return 'إعداد المراجعة';
+  }
+
+  String get _subtitle {
+    if (isBeginner) {
+      return 'المراجعة ستكون مما تحفظه داخل الخطة، وبإيقاع خفيف يناسب بداية الرحلة.';
+    }
+
+    return 'حدد المحفوظ الذي تريد مراجعته مع الحفظ، ثم اختر وتيرة واضحة لجلسات المراجعة.';
+  }
+
+  MemorizationScopeSelection? _selectedReviewScope() {
+    if (_reviewFromLearnedOnly) return null;
+
+    switch (reviewScopeKind) {
+      case _ReviewScopeKind.surah:
+        return calculator.buildSurah(surahNumber: selectedReviewSurah);
+      case _ReviewScopeKind.juz:
+        return calculator.buildJuz(selectedReviewJuz);
+      case _ReviewScopeKind.hizb:
+        return calculator.buildHizb(selectedReviewHizb);
+      case _ReviewScopeKind.wholeQuran:
+        return calculator.buildWholeQuran();
+    }
+  }
+
+
+  int _selectedReviewTotalPages() {
+    if (_reviewFromLearnedOnly) {
+      return _safePages(widget.mainScopeSelection.totalPages);
+    }
+
+    switch (reviewScopeKind) {
+      case _ReviewScopeKind.surah:
+        return _safePages(calculator.buildSurah(surahNumber: selectedReviewSurah).totalPages);
+      case _ReviewScopeKind.juz:
+        return 20;
+      case _ReviewScopeKind.hizb:
+        return 10;
+      case _ReviewScopeKind.wholeQuran:
+        return 604;
+    }
+  }
+
+  int _safePages(int pages) {
+    return pages <= 0 ? 1 : pages;
+  }
+
+  int _plannedTestsCount() {
+    final totalAyahs = widget.mainScopeSelection.totalAyahs;
+    final totalPages = widget.mainScopeSelection.totalPages;
+
+    if (widget.actionType != MemorizationActionType.strengthenAndTest &&
+        widget.actionType != MemorizationActionType.reviewOnly) {
+      return 0;
+    }
+
+    if (totalAyahs > 0 && totalAyahs <= 10) return 1;
+    if (totalPages <= 3) return 1;
+    if (totalPages <= 10) return 2;
+    if (totalPages <= 30) return 3;
+    if (totalPages <= 100) return 5;
+    return 8;
+  }
+
+  void _goNext() {
+    AppHaptics.tap(context);
+
+    final effectiveSmartDistribution = isBeginnerNewWithReview
+        ? true
+        : smartReviewDistribution;
+
+    final reviewTargetSessions = (isBeginnerNewWithReview || effectiveSmartDistribution)
+        ? null
+        : _reviewTargetSessionsValue();
+    final reviewDailyPages = (isBeginnerNewWithReview || effectiveSmartDistribution)
+        ? null
+        : _reviewDailyPagesValue();
+    final effectiveReviewEveryDays = isBeginnerNewWithReview ? 3 : reviewEveryDays;
+
+    if (!isBeginnerNewWithReview &&
+        !effectiveSmartDistribution &&
+        distributionMode == _ReviewDistributionMode.sessions &&
+        reviewTargetSessions == null) {
+      MasterySnackBar.show(context, message: 'اكتب عدد جلسات مراجعة صحيح');
+      return;
+    }
+
+    if (!isBeginnerNewWithReview &&
+        !effectiveSmartDistribution &&
+        distributionMode == _ReviewDistributionMode.pagesPerSession &&
+        reviewDailyPages == null) {
+      MasterySnackBar.show(context, message: 'اكتب عدد صفحات مراجعة صحيح');
+      return;
+    }
+
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => MemorizationGoalPage(
+          userType: widget.userType,
+          actionType: widget.actionType,
+          scopeSelection: widget.mainScopeSelection,
+          reviewScope: _selectedReviewScope(),
+          reviewFromLearnedOnly: _reviewFromLearnedOnly,
+          smartReviewDistribution: effectiveSmartDistribution,
+          reviewEveryDays: effectiveReviewEveryDays,
+          reviewTargetDays: reviewTargetSessions,
+          reviewDailyPages: reviewDailyPages,
+          plannedTestsCount: _plannedTestsCount(),
+        ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: theme.colorScheme.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            CustomAppBar(
+              category: CustomAppBarCategory(text: 'حلقة الحفظ'),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: EdgeInsets.fromLTRB(14.w, 10.h, 14.w, 16.h),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _StepHeader(
+                      title: _title,
+                      subtitle: _subtitle,
+                      stepText: '٥ من ٧',
+                    ),
+                    SizedBox(height: 14.h),
+                    _InfoSummary(
+                      title: 'نطاق الحفظ',
+                      subtitle: widget.mainScopeSelection.rangeText,
+                      icon: Icons.menu_book_rounded,
+                    ),
+                    SizedBox(height: 12.h),
+                    if (isBeginnerNewWithReview) ...[
+                      const _InfoSummary(
+                        title: 'المراجعة الذكية',
+                        subtitle:
+                        'هنراجع آخر ما حفظته بوتيرة ثابتة، ومع كل أسبوعين نرجع على كل ما سبق بهدوء.',
+                        icon: Icons.auto_awesome_rounded,
+                      ),
+                    ] else ...[
+                      _FrequencyCard(
+                        value: reviewEveryDays,
+                        smartValue: smartReviewDistribution,
+                        onSmartChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() => smartReviewDistribution = value);
+                        },
+                        onChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() {
+                            smartReviewDistribution = false;
+                            reviewEveryDays = value;
+                          });
+                        },
+                      ),
+                    ],
+                    SizedBox(height: 12.h),
+                    if (needsSeparateReviewScope) ...[
+                      _ReviewScopeCard(
+                        calculator: calculator,
+                        kind: reviewScopeKind,
+                        selectedSurah: selectedReviewSurah,
+                        selectedJuz: selectedReviewJuz,
+                        selectedHizb: selectedReviewHizb,
+                        onKindChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() => reviewScopeKind = value);
+                        },
+                        onSurahChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() => selectedReviewSurah = value);
+                        },
+                        onJuzChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() => selectedReviewJuz = value);
+                        },
+                        onHizbChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() => selectedReviewHizb = value);
+                        },
+                      ),
+                    ] else
+                      _InfoSummary(
+                        title: 'مصدر المراجعة',
+                        subtitle:
+                        'ستكون المراجعة من الآيات التي تحفظها داخل هذه الخطة، وبمقدار خفيف يناسب البداية.',
+                        icon: Icons.repeat_rounded,
+                      ),
+                    if (!isBeginnerNewWithReview && !smartReviewDistribution) ...[
+                      SizedBox(height: 12.h),
+                      _ReviewDistributionCard(
+                        mode: distributionMode,
+                        sessionsController: reviewSessionsController,
+                        pagesController: reviewPagesController,
+                        reviewEveryDays: reviewEveryDays,
+                        reviewTotalPages: _selectedReviewTotalPages(),
+                        onModeChanged: (value) {
+                          AppHaptics.tap(context);
+                          setState(() => distributionMode = value);
+                        },
+                      ),
+                    ] else if (!isBeginnerNewWithReview) ...[
+                      SizedBox(height: 12.h),
+                      const _InfoSummary(
+                        title: 'توزيع المراجعة',
+                        subtitle: 'سنوزع جلسات المراجعة تلقائيًا حسب حجم الخطة وعدد أيام الحفظ، مع مراجعة شاملة كل فترة.',
+                        icon: Icons.auto_awesome_rounded,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            _BottomActionBar(onNext: _goNext),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _ReviewScopeKind { surah, juz, hizb, wholeQuran }
+
+class _StepHeader extends StatelessWidget {
+  const _StepHeader({
+    required this.title,
+    required this.subtitle,
+    required this.stepText,
+  });
+
+  final String title;
+  final String subtitle;
+  final String stepText;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(15.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary,
+        borderRadius: BorderRadius.circular(24.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 5.h),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(30.r),
+              border: Border.all(color: Colors.white.withOpacity(0.16)),
+            ),
+            child: Text(
+              stepText,
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: Colors.white,
+                height: 1
+),
+            ),
+          ),
+          SizedBox(height: 12.h),
+          Text(
+            title,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.body(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: Colors.white,
+              height: 1.25
+),
+          ),
+          SizedBox(height: 6.h),
+          Text(
+            subtitle,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+              color: Colors.white.withOpacity(0.74),
+              height: 1.45
+),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoSummary extends StatelessWidget {
+  const _InfoSummary({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Icon(icon, color: theme.colorScheme.primary, size: 23.sp),
+          SizedBox(width: 10.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(title,
+                    textDirection: TextDirection.rtl,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                      color: theme.colorScheme.surface
+)),
+                SizedBox(height: 4.h),
+                Text(subtitle,
+                    textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.right,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.surface.withOpacity(0.60),
+                      height: 1.4
+)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FrequencyCard extends StatelessWidget {
+  const _FrequencyCard({
+    required this.value,
+    required this.smartValue,
+    required this.onSmartChanged,
+    required this.onChanged,
+  });
+
+  final int value;
+  final bool smartValue;
+  final ValueChanged<bool> onSmartChanged;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final options = const [1, 2, 3];
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'توزيع المراجعة',
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface
+),
+          ),
+          SizedBox(height: 4.h),
+          Text(
+            'اختار توزيعًا ذكيًا، أو حدد يدويًا بعد كم جلسة أساسية نضيف يوم مراجعة مستقل.',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+              color: theme.colorScheme.surface.withOpacity(0.58),
+              height: 1.4
+),
+          ),
+          SizedBox(height: 12.h),
+          _SmartReviewChoice(
+            isSelected: smartValue,
+            onTap: () => onSmartChanged(true),
+          ),
+          SizedBox(height: 12.h),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              'بعد كل كم جلسة أساسية؟',
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface.withOpacity(0.70)
+),
+            ),
+          ),
+          SizedBox(height: 8.h),
+          Row(
+            textDirection: TextDirection.rtl,
+            children: options.map((sessions) {
+              final selected = !smartValue && value == sessions;
+              return Expanded(
+                child: Padding(
+                  padding: EdgeInsetsDirectional.only(
+                    start: sessions == options.last ? 0 : 8.w,
+                  ),
+                  child: _ChoiceButton(
+                    title: sessions == 1
+                        ? 'جلسة'
+                        : sessions == 2
+                        ? 'جلستين'
+                        : '3 جلسات',
+                    isSelected: selected,
+                    onTap: () => onChanged(sessions),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SmartReviewChoice extends StatelessWidget {
+  const _SmartReviewChoice({
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18.r),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: double.infinity,
+          padding: EdgeInsets.all(12.w),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? theme.colorScheme.primary.withOpacity(0.11)
+                : theme.colorScheme.background.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(18.r),
+            border: Border.all(
+              color: isSelected
+                  ? theme.colorScheme.primary.withOpacity(0.55)
+                  : theme.colorScheme.outline.withOpacity(0.12),
+            ),
+          ),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                Icons.auto_awesome_rounded,
+                color: theme.colorScheme.primary,
+                size: 20.sp,
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'توزيع ذكي',
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.surface
+),
+                    ),
+                    SizedBox(height: 3.h),
+                    Text(
+                      'التطبيق يحدد أنسب أيام المراجعة حسب مدة الخطة وحجم الحفظ، مع مراجعة شاملة كل فترة.',
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.surface.withOpacity(0.56),
+                        height: 1.35
+),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewSourceCard extends StatelessWidget {
+  const _ReviewSourceCard({
+    required this.reviewFromLearnedOnly,
+    required this.onChanged,
+  });
+
+  final bool reviewFromLearnedOnly;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _ChoiceButton(
+            title: 'من حفظ الخطة',
+            isSelected: reviewFromLearnedOnly,
+            onTap: () => onChanged(true),
+          ),
+        ),
+        SizedBox(width: 8.w),
+        Expanded(
+          child: _ChoiceButton(
+            title: 'محفوظ سابق',
+            isSelected: !reviewFromLearnedOnly,
+            onTap: () => onChanged(false),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewScopeCard extends StatelessWidget {
+  const _ReviewScopeCard({
+    required this.calculator,
+    required this.kind,
+    required this.selectedSurah,
+    required this.selectedJuz,
+    required this.selectedHizb,
+    required this.onKindChanged,
+    required this.onSurahChanged,
+    required this.onJuzChanged,
+    required this.onHizbChanged,
+  });
+
+  final QuranScopeCalculator calculator;
+  final _ReviewScopeKind kind;
+  final int selectedSurah;
+  final int selectedJuz;
+  final int selectedHizb;
+  final ValueChanged<_ReviewScopeKind> onKindChanged;
+  final ValueChanged<int> onSurahChanged;
+  final ValueChanged<int> onJuzChanged;
+  final ValueChanged<int> onHizbChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text('نطاق المراجعة',
+              textDirection: TextDirection.rtl,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface
+)),
+          SizedBox(height: 10.h),
+          Wrap(
+            spacing: 8.w,
+            runSpacing: 8.h,
+            alignment: WrapAlignment.end,
+            children: [
+              _SmallChoice('_سورة', 'سورة', kind == _ReviewScopeKind.surah, () => onKindChanged(_ReviewScopeKind.surah)),
+              _SmallChoice('_جزء', 'جزء', kind == _ReviewScopeKind.juz, () => onKindChanged(_ReviewScopeKind.juz)),
+              _SmallChoice('_حزب', 'حزب', kind == _ReviewScopeKind.hizb, () => onKindChanged(_ReviewScopeKind.hizb)),
+              _SmallChoice('_كامل', 'القرآن', kind == _ReviewScopeKind.wholeQuran, () => onKindChanged(_ReviewScopeKind.wholeQuran)),
+            ],
+          ),
+          if (kind == _ReviewScopeKind.surah) ...[
+            SizedBox(height: 10.h),
+            DropdownButtonFormField<int>(
+              value: selectedSurah,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'اختر السورة',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14.r)),
+              ),
+              items: List.generate(114, (index) {
+                final number = index + 1;
+                return DropdownMenuItem(
+                  value: number,
+                  child: Text('$number - ${calculator.surahName(number)}', textDirection: TextDirection.rtl),
+                );
+              }),
+              onChanged: (value) {
+                if (value != null) onSurahChanged(value);
+              },
+            ),
+          ],
+          if (kind == _ReviewScopeKind.juz) ...[
+            SizedBox(height: 10.h),
+            DropdownButtonFormField<int>(
+              value: selectedJuz,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'اختر الجزء',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14.r)),
+              ),
+              items: List.generate(30, (index) {
+                final number = index + 1;
+                return DropdownMenuItem(value: number, child: Text('الجزء $number', textDirection: TextDirection.rtl));
+              }),
+              onChanged: (value) {
+                if (value != null) onJuzChanged(value);
+              },
+            ),
+          ],
+          if (kind == _ReviewScopeKind.hizb) ...[
+            SizedBox(height: 10.h),
+            DropdownButtonFormField<int>(
+              value: selectedHizb,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'اختر الحزب',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14.r)),
+              ),
+              items: List.generate(60, (index) {
+                final number = index + 1;
+                return DropdownMenuItem(value: number, child: Text('الحزب $number', textDirection: TextDirection.rtl));
+              }),
+              onChanged: (value) {
+                if (value != null) onHizbChanged(value);
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SmallChoice extends StatelessWidget {
+  const _SmallChoice(this.keyText, this.title, this.isSelected, this.onTap);
+
+  final String keyText;
+  final String title;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 76.w,
+      child: _ChoiceButton(
+        title: title,
+        isSelected: isSelected,
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _ChoiceButton extends StatelessWidget {
+  const _ChoiceButton({
+    required this.title,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(15.r),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 10.h),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? theme.colorScheme.primary.withOpacity(0.12)
+                : theme.colorScheme.background.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(15.r),
+            border: Border.all(
+              color: isSelected
+                  ? theme.colorScheme.primary.withOpacity(0.55)
+                  : theme.colorScheme.outline.withOpacity(0.12),
+            ),
+          ),
+          child: Text(
+            title,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: isSelected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.surface
+),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+enum _ReviewDistributionMode { sessions, pagesPerSession }
+
+class _ReviewDistributionCard extends StatelessWidget {
+  const _ReviewDistributionCard({
+    required this.mode,
+    required this.sessionsController,
+    required this.pagesController,
+    required this.reviewEveryDays,
+    required this.reviewTotalPages,
+    required this.onModeChanged,
+  });
+
+  final _ReviewDistributionMode mode;
+  final TextEditingController sessionsController;
+  final TextEditingController pagesController;
+  final int reviewEveryDays;
+  final int reviewTotalPages;
+  final ValueChanged<_ReviewDistributionMode> onModeChanged;
+
+  String get _previewText {
+    final pagesTotal = reviewTotalPages <= 0 ? 1 : reviewTotalPages;
+
+    if (mode == _ReviewDistributionMode.sessions) {
+      final sessions = int.tryParse(sessionsController.text.trim()) ?? 0;
+      if (sessions <= 0) {
+        return 'حدد عدد جلسات المراجعة ليظهر لك مقدار كل جلسة بوضوح.';
+      }
+
+      final effectiveDays = 1 + ((sessions - 1) * reviewEveryDays);
+      final pagesPerSession = pagesTotal / sessions;
+      return 'كل جلسة ستكون حوالي ${_formatPages(_roundToHalfPage(pagesPerSession))}. تمتد المراجعة على $sessions جلسات خلال $effectiveDays يوم تقريبًا.';
+    }
+
+    final normalized = pagesController.text.trim().replaceAll(',', '.');
+    final pages = double.tryParse(normalized) ?? 0;
+    if (pages <= 0) {
+      return 'حدد مقدار الصفحات في كل جلسة ليحسب التطبيق عدد الجلسات المتوقع.';
+    }
+
+    final sessions = (pagesTotal / pages).ceil().clamp(1, 999).toInt();
+    final effectiveDays = 1 + ((sessions - 1) * reviewEveryDays);
+    return 'اختيارك يعادل $sessions جلسات مراجعة تقريبًا خلال $effectiveDays يوم.';
+  }
+
+  double _roundToHalfPage(double value) {
+    if (value <= 0) return 0.5;
+    return (value * 2).ceil() / 2;
+  }
+
+  String _formatPages(double value) {
+    if (value == 0.5) return 'نصف صفحة';
+    if (value == 1) return 'صفحة واحدة';
+    if (value == 2) return 'صفحتين';
+    if (value > 2 && value < 11 && value == value.roundToDouble()) {
+      return '${value.toInt()} صفحات';
+    }
+    if (value == value.roundToDouble()) return '${value.toInt()} صفحة';
+    return '${value.toStringAsFixed(1)} صفحة';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return StatefulBuilder(
+      builder: (context, setLocalState) {
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(13.w),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondary,
+            borderRadius: BorderRadius.circular(22.r),
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(0.12),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'توزيع المراجعة',
+                textDirection: TextDirection.rtl,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: theme.colorScheme.surface
+),
+              ),
+              SizedBox(height: 4.h),
+              Text(
+                'اختر كيف تريد تقسيم نطاق المراجعة على الجلسات.',
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.surface.withOpacity(0.58),
+                  height: 1.4
+),
+              ),
+              SizedBox(height: 12.h),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ChoiceButton(
+                      title: 'عدد جلسات',
+                      isSelected: mode == _ReviewDistributionMode.sessions,
+                      onTap: () => onModeChanged(_ReviewDistributionMode.sessions),
+                    ),
+                  ),
+                  SizedBox(width: 8.w),
+                  Expanded(
+                    child: _ChoiceButton(
+                      title: 'صفحات لكل جلسة',
+                      isSelected:
+                      mode == _ReviewDistributionMode.pagesPerSession,
+                      onTap: () =>
+                          onModeChanged(_ReviewDistributionMode.pagesPerSession),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 12.h),
+              if (mode == _ReviewDistributionMode.sessions)
+                _ReviewInputField(
+                  label: 'عدد جلسات المراجعة',
+                  controller: sessionsController,
+                  onChanged: (_) => setLocalState(() {}),
+                )
+              else
+                _ReviewInputField(
+                  label: 'صفحات في كل جلسة',
+                  controller: pagesController,
+                  allowDecimal: true,
+                  onChanged: (_) => setLocalState(() {}),
+                ),
+              SizedBox(height: 10.h),
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(10.w),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(15.r),
+                  border: Border.all(
+                    color: theme.colorScheme.primary.withOpacity(0.10),
+                  ),
+                ),
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Icon(
+                      Icons.auto_awesome_rounded,
+                      color: theme.colorScheme.primary,
+                      size: 17.sp,
+                    ),
+                    SizedBox(width: 8.w),
+                    Expanded(
+                      child: Text(
+                        _previewText,
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.surface.withOpacity(0.64),
+                          height: 1.38
+),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ReviewInputField extends StatelessWidget {
+  const _ReviewInputField({
+    required this.label,
+    required this.controller,
+    required this.onChanged,
+    this.allowDecimal = false,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final bool allowDecimal;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: TextInputType.numberWithOptions(decimal: allowDecimal),
+      textAlign: TextAlign.right,
+      textDirection: TextDirection.rtl,
+      onChanged: onChanged,
+      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700
+),
+      decoration: InputDecoration(
+        labelText: label,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomActionBar extends StatelessWidget {
+  const _BottomActionBar({required this.onNext});
+
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(14.w, 10.h, 14.w, 14.h),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outline.withOpacity(0.12)),
+        ),
+      ),
+      child: MasteryPrimaryButton(
+        text: 'التالي',
+        icon: Icons.arrow_back_rounded,
+        onTap: onNext,
+        iconAfterText: true,
+      ),
+    );
+  }
+}

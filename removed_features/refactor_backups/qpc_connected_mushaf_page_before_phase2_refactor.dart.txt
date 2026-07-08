@@ -1,0 +1,2536 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:http/http.dart' as http;
+import 'package:just_audio/just_audio.dart';
+
+import '../audio/quran_ayah_audio_service.dart';
+import '../main_quraan_components/constant.dart';
+import '../main_quraan_components/index.dart';
+import 'audio/quran_word_sync_controller.dart';
+import 'data/qpc_mushaf_repository.dart';
+import 'data/qpc_reader_perf.dart';
+import 'hiding/quran_hide_mode.dart';
+import 'irab/quran_irab_sheet.dart';
+import 'models/qpc_models.dart';
+import 'models/quran_ayah_sheet_text.dart';
+import 'models/quran_ayah_tap_result.dart';
+import 'models/quran_selection.dart';
+import 'quran_bookmark_storage.dart';
+import 'quran_page_mapper.dart';
+import 'qpc_ayah_search_page.dart';
+import 'quran_reader_helpers.dart';
+import 'quran_reader_storage.dart';
+import 'svg/svg_mushaf_geometry_repository.dart';
+import 'svg/svg_mushaf_page_metadata.dart';
+import '../memorization/services/quran_memorization_progress_storage.dart';
+import '../wird/quran_wird_progress_storage.dart';
+import '../wird/quran_wird_storage.dart';
+import '../stats/quran_reading_stats_storage.dart';
+import 'tafsir/quran_tafsir_sheet.dart';
+import 'theme/quran_reader_theme.dart';
+import 'theme/quran_reader_theme_controller.dart';
+import 'widgets/qpc_audio_control_bar.dart';
+import 'widgets/qpc_bottom_page_slider.dart';
+import 'widgets/qpc_floating_hide_button.dart';
+import 'widgets/qpc_mushaf_page_view.dart';
+import 'widgets/qpc_top_controls_bar.dart';
+part 'connected/quran_reader_support.dart';
+
+enum _QuranSelectionAction { play, tafsir, irab, clear }
+
+class QpcConnectedMushafPage extends StatefulWidget {
+  const QpcConnectedMushafPage({
+    super.key,
+    this.initialPage = 1,
+    this.initialGlobalAyahIndex,
+    this.initialHideMode = QuranHideMode.visible,
+    this.openedFromTest = false,
+    this.saveAsLastRead = true,
+    this.saveAsMushafOpenProgress = false,
+    this.wirdPlanId,
+    this.wirdStartGlobalAyahIndex,
+    this.wirdEndGlobalAyahIndex,
+    this.memorizationTaskId,
+    this.memorizationStartGlobalAyahIndex,
+    this.memorizationEndGlobalAyahIndex,
+    this.memorizationStep = 'reading',
+  });
+
+  final int initialPage;
+  final int? initialGlobalAyahIndex;
+  final QuranHideMode initialHideMode;
+  final bool openedFromTest;
+  final bool saveAsLastRead;
+  final bool saveAsMushafOpenProgress;
+  final String? wirdPlanId;
+  final int? wirdStartGlobalAyahIndex;
+  final int? wirdEndGlobalAyahIndex;
+  final String? memorizationTaskId;
+  final int? memorizationStartGlobalAyahIndex;
+  final int? memorizationEndGlobalAyahIndex;
+  final String memorizationStep;
+
+  @override
+  State<QpcConnectedMushafPage> createState() => _QpcConnectedMushafPageState();
+}
+
+class _QpcConnectedMushafPageState extends State<QpcConnectedMushafPage> {
+  late final PageController _pageController;
+
+  final QpcMushafRepository _repository = QpcMushafRepository.instance;
+  final QuranAyahAudioService _audioService = QuranAyahAudioService.instance;
+  final QuranWordSyncController _wordSyncController =
+      const QuranWordSyncController();
+  final QuranReaderThemeController _themeController =
+      QuranReaderThemeController.instance;
+  final SvgMushafGeometryRepository _svgGeometryRepository =
+      SvgMushafGeometryRepository.instance;
+
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<PlayerState>? _playerStateSubscription;
+  Timer? _controlsTimer;
+  Timer? _autoNextTimer;
+  Timer? _previewUpdateTimer;
+  Timer? _readingPersistenceTimer;
+
+  int _selectedPageNumber = 1;
+  QpcAyahKey? _anchorAyahKey;
+  int? _lastMushafPageNumber;
+  bool _didAutoCompleteWird = false;
+
+  bool _controlsVisible = true;
+  bool _bottomBarInteractionActive = false;
+  bool _audioPanelVisible = false;
+  bool _connectedMode = false;
+  bool _waqfHighlightEnabled = false;
+
+  // Used only for the bottom slider live preview while dragging/scrolling.
+  // Do NOT use this as the mode-switch anchor, otherwise switching between
+  // connected text and mushaf loses the exact selected/active ayah.
+  QpcAyahKey? _previewAyahKey;
+
+  bool _isAudioLoading = false;
+  bool _isAudioPlaying = false;
+  bool _autoContinueSurah = false;
+  bool _userStoppedAudio = false;
+
+  double _fontScale = 1.0;
+  double _volume = 1.0;
+
+  String _reciterName = QuranAyahAudioService.instance.currentReciter.name;
+
+  QuranHideMode _hideMode = QuranHideMode.visible;
+  QuranSelection? _selection;
+  QpcPageData? _visiblePageData;
+
+  QpcAyahKey? _playingAyah;
+  QpcWordKey? _activeAudioWord;
+  QuranAyahAudioInfo? _currentAudioInfo;
+  List<QpcWord> _currentPlayingAyahWords = <QpcWord>[];
+  int _audioRequestToken = 0;
+  bool _isAutoAdvancingAudio = false;
+  QpcAyahKey? _lastCompletedAudioAyah;
+  _QpcPendingReadingPersistence? _pendingReadingPersistence;
+  late final ValueNotifier<_QpcBottomBarSnapshot> _bottomBarSnapshotNotifier;
+  late final ValueNotifier<SvgMushafPageMetadata?> _pageMetadataNotifier;
+  int _pageMetadataRequestToken = 0;
+  DateTime? _lastBottomPreviewUpdateAt;
+  int? _pendingBottomPreviewPage;
+  int? _lastWarmUpCenterPage;
+  int _readerWarmUpGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _anchorAyahKey = _initialAnchorAyahKey();
+    _selectedPageNumber = widget.initialPage.clamp(1, 604);
+    _lastMushafPageNumber = _selectedPageNumber;
+    _hideMode = widget.initialHideMode;
+    _bottomBarSnapshotNotifier = ValueNotifier<_QpcBottomBarSnapshot>(
+      _bottomBarSnapshotForPage(_selectedPageNumber),
+    );
+    _pageMetadataNotifier = ValueNotifier<SvgMushafPageMetadata?>(null);
+
+    _pageController = PageController(
+      initialPage: _mushafPageIndex(_selectedPageNumber),
+    );
+
+    unawaited(_syncPageMetadata(_selectedPageNumber));
+    unawaited(_syncInitialPageFromAnchor());
+    _warmUpReaderAssets(_selectedPageNumber, reason: 'init');
+
+    unawaited(_themeController.init());
+    unawaited(_audioService.player.setVolume(_volume));
+
+    _positionSubscription = _audioService.positionStream.listen(
+      _handleAudioPosition,
+    );
+
+    _playerStateSubscription = _audioService.playerStateStream.listen(
+      _handlePlayerState,
+    );
+
+    _restartControlsAutoHideTimer();
+  }
+
+  int _mushafPageIndex(int pageNumber) {
+    return QpcMushafPageView.indexFromPageNumber(pageNumber);
+  }
+
+  void _warmUpReaderAssets(int pageNumber, {required String reason}) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+
+    if (_lastWarmUpCenterPage == safePage) {
+      return;
+    }
+
+    _lastWarmUpCenterPage = safePage;
+    final int generation = ++_readerWarmUpGeneration;
+
+    unawaited(
+      _prepareReaderWindow(safePage, generation: generation, reason: reason),
+    );
+  }
+
+  Future<void> _prepareReaderWindow(
+    int pageNumber, {
+    required int generation,
+    required String reason,
+  }) async {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+
+    await QpcReaderPerf.timeAsync(
+      'reader warm-up $reason p$safePage',
+      () async {
+        await _repository.initialize();
+
+        for (final int page in _priorityReaderPages(safePage, radius: 2)) {
+          if (!mounted || generation != _readerWarmUpGeneration) {
+            return;
+          }
+
+          await Future.wait(<Future<dynamic>>[
+            _repository.loadPage(page),
+            _svgGeometryRepository.loadPage(page),
+          ]);
+
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        _repository.retainPagesAround(safePage, radius: 4);
+      },
+    );
+  }
+
+  List<int> _priorityReaderPages(int pageNumber, {required int radius}) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    final List<int> pages = <int>[safePage];
+
+    for (int offset = 1; offset <= radius; offset++) {
+      final int nextPage = safePage + offset;
+      final int previousPage = safePage - offset;
+
+      if (nextPage <= 604) {
+        pages.add(nextPage);
+      }
+
+      if (previousPage >= 1) {
+        pages.add(previousPage);
+      }
+    }
+
+    return pages;
+  }
+
+  QpcAyahKey? _initialAnchorAyahKey() {
+    final int? explicitIndex = widget.initialGlobalAyahIndex;
+    final int? wirdStart = widget.wirdStartGlobalAyahIndex;
+    final int? memorizationStart = widget.memorizationStartGlobalAyahIndex;
+
+    final int? targetGlobalIndex =
+        explicitIndex ?? memorizationStart ?? wirdStart;
+    if (targetGlobalIndex == null) {
+      return null;
+    }
+
+    final int safeIndex = targetGlobalIndex
+        .clamp(0, QuranReaderHelpers.totalAyahs - 1)
+        .toInt();
+    final QuranAyahPosition position =
+        QuranReaderHelpers.getPositionFromGlobalIndex(safeIndex);
+
+    return QpcAyahKey(
+      surah: position.suraIndex + 1,
+      ayah: position.ayahIndex + 1,
+    );
+  }
+
+  Future<void> _syncInitialPageFromAnchor() async {
+    final QpcAyahKey? anchor = _anchorAyahKey;
+    if (anchor == null) {
+      return;
+    }
+
+    await QuranPageMapper.load();
+    if (!mounted) {
+      return;
+    }
+
+    final int pageNumber = _pageNumberForAyah(anchor);
+    if (pageNumber == _selectedPageNumber) {
+      return;
+    }
+
+    _pageController.jumpToPage(_mushafPageIndex(pageNumber));
+    setState(() {
+      _selectedPageNumber = pageNumber;
+      _lastMushafPageNumber = pageNumber;
+    });
+    _setBottomBarSnapshotForPage(pageNumber, ayahKey: anchor);
+    _warmUpReaderAssets(pageNumber, reason: 'initial anchor sync');
+  }
+
+  int _pageNumberForAyah(QpcAyahKey ayahKey) {
+    final int globalAyahIndex = QuranReaderHelpers.getGlobalAyahIndex(
+      suraIndex: (ayahKey.surah - 1).clamp(0, 113).toInt(),
+      ayahIndex: (ayahKey.ayah - 1).clamp(0, 286).toInt(),
+    );
+
+    return QuranPageMapper.getPageNumberForGlobalAyah(
+      globalAyahIndex,
+    ).clamp(1, 604).toInt();
+  }
+
+  QpcAyahKey _pageStartAyahKey(int pageNumber) {
+    final int globalAyahIndex = QuranPageMapper.getGlobalAyahIndexForPage(
+      pageNumber.clamp(1, 604).toInt(),
+    );
+    final QuranAyahPosition position =
+        QuranReaderHelpers.getPositionFromGlobalIndex(globalAyahIndex);
+
+    return QpcAyahKey(
+      surah: position.suraIndex + 1,
+      ayah: position.ayahIndex + 1,
+    );
+  }
+
+  _QpcBottomBarSnapshot _bottomBarSnapshotForPage(
+    int pageNumber, {
+    QpcAyahKey? ayahKey,
+  }) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    final QpcAyahKey displayAyah = ayahKey ?? _pageStartAyahKey(safePage);
+
+    return _QpcBottomBarSnapshot(
+      pageNumber: safePage,
+      surahName: QuranReaderHelpers.getSuraName(
+        (displayAyah.surah - 1).clamp(0, 113).toInt(),
+      ),
+      ayahNumber: displayAyah.ayah,
+      juzNumber: QuranReaderHelpers.getJuzNumber(
+        suraIndex: (displayAyah.surah - 1).clamp(0, 113).toInt(),
+        ayahIndex: (displayAyah.ayah - 1).clamp(0, 286).toInt(),
+      ),
+    );
+  }
+
+  void _setBottomBarSnapshotForPage(int pageNumber, {QpcAyahKey? ayahKey}) {
+    unawaited(_syncPageMetadata(pageNumber));
+
+    final _QpcBottomBarSnapshot nextSnapshot = _bottomBarSnapshotForPage(
+      pageNumber,
+      ayahKey: ayahKey,
+    );
+
+    if (_bottomBarSnapshotNotifier.value == nextSnapshot) {
+      return;
+    }
+
+    _bottomBarSnapshotNotifier.value = nextSnapshot;
+  }
+
+  Future<void> _syncPageMetadata(int pageNumber) async {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    if (_pageMetadataNotifier.value?.page == safePage) {
+      return;
+    }
+
+    final int token = ++_pageMetadataRequestToken;
+    try {
+      final SvgMushafPageMetadata? metadata =
+          await SvgMushafPageMetadataRepository.instance.loadPage(safePage);
+      if (!mounted || token != _pageMetadataRequestToken) {
+        return;
+      }
+      _pageMetadataNotifier.value = metadata;
+    } catch (_) {
+      if (!mounted || token != _pageMetadataRequestToken) {
+        return;
+      }
+      _pageMetadataNotifier.value = null;
+    }
+  }
+
+  void _scheduleBottomBarPreview(int pageNumber) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    if (_bottomBarSnapshotNotifier.value.pageNumber == safePage) {
+      return;
+    }
+
+    _pendingBottomPreviewPage = safePage;
+
+    final DateTime now = DateTime.now();
+    final DateTime? lastUpdate = _lastBottomPreviewUpdateAt;
+    const Duration throttle = Duration(milliseconds: 48);
+
+    if (lastUpdate == null || now.difference(lastUpdate) >= throttle) {
+      _applyPendingBottomBarPreview();
+      return;
+    }
+
+    _previewUpdateTimer?.cancel();
+    _previewUpdateTimer = Timer(throttle - now.difference(lastUpdate), () {
+      _applyPendingBottomBarPreview();
+    });
+  }
+
+  void _applyPendingBottomBarPreview() {
+    final int? pendingPage = _pendingBottomPreviewPage;
+    if (!mounted || pendingPage == null) {
+      return;
+    }
+
+    _pendingBottomPreviewPage = null;
+    _lastBottomPreviewUpdateAt = DateTime.now();
+    _setBottomBarSnapshotForPage(pendingPage);
+  }
+
+  int _globalIndexForAyah(QpcAyahKey ayahKey) {
+    return QuranReaderHelpers.getGlobalAyahIndex(
+      suraIndex: (ayahKey.surah - 1).clamp(0, 113).toInt(),
+      ayahIndex: (ayahKey.ayah - 1).clamp(0, 286).toInt(),
+    );
+  }
+
+  QpcAyahKey _ayahKeyFromGlobalIndex(int globalAyahIndex) {
+    final int safeIndex = globalAyahIndex
+        .clamp(0, QuranReaderHelpers.totalAyahs - 1)
+        .toInt();
+    final QuranAyahPosition position =
+        QuranReaderHelpers.getPositionFromGlobalIndex(safeIndex);
+
+    return QpcAyahKey(
+      surah: position.suraIndex + 1,
+      ayah: position.ayahIndex + 1,
+    );
+  }
+
+  QpcAyahKey _pageEndAyahKey(int pageNumber) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    final int nextPage = safePage + 1;
+    final int endGlobalAyahIndex;
+
+    if (nextPage <= 604) {
+      endGlobalAyahIndex =
+          QuranPageMapper.getGlobalAyahIndexForPage(nextPage) - 1;
+    } else {
+      endGlobalAyahIndex = QuranReaderHelpers.totalAyahs - 1;
+    }
+
+    return _ayahKeyFromGlobalIndex(endGlobalAyahIndex);
+  }
+
+  bool get _isWirdReader {
+    final String? planId = widget.wirdPlanId;
+    return planId != null && planId.trim().isNotEmpty;
+  }
+
+  QpcAyahKey _mushafProgressAyahKeyForPage(int pageNumber) {
+    // في المصحف لا نعرف الآية الدقيقة داخل الصفحة، لذلك للورد نحسب نهاية الصفحة.
+    // وعند قلب الصفحة نحفظ الصفحة السابقة كنقطة تقدم، وبكده آخر آية لا تضيع.
+    if (_isWirdReader) {
+      return _pageEndAyahKey(pageNumber);
+    }
+
+    final QpcAyahKey? currentAnchor = _anchorAyahKey;
+    if (currentAnchor != null && _isAnchorOnPage(currentAnchor, pageNumber)) {
+      return currentAnchor;
+    }
+
+    return _pageStartAyahKey(pageNumber);
+  }
+
+  bool _isAnchorOnPage(QpcAyahKey ayahKey, int pageNumber) {
+    return _pageNumberForAyah(ayahKey) == pageNumber.clamp(1, 604);
+  }
+
+  @override
+  void dispose() {
+    final _QpcPendingReadingPersistence? pendingPersistence =
+        _pendingReadingPersistence;
+    if (pendingPersistence != null) {
+      unawaited(_flushReadingPersistence(pendingPersistence));
+    }
+
+    _controlsTimer?.cancel();
+    _autoNextTimer?.cancel();
+    _previewUpdateTimer?.cancel();
+    _readingPersistenceTimer?.cancel();
+    _positionSubscription?.cancel();
+    _playerStateSubscription?.cancel();
+    _bottomBarSnapshotNotifier.dispose();
+    _pageMetadataNotifier.dispose();
+    unawaited(_audioService.stop());
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _handlePlayerState(PlayerState state) {
+    if (!mounted) {
+      return;
+    }
+
+    final bool isPlayingNow = state.playing;
+    if (_isAudioPlaying != isPlayingNow) {
+      setState(() {
+        _isAudioPlaying = isPlayingNow;
+      });
+    }
+
+    if (state.processingState != ProcessingState.completed ||
+        !_canAutoAdvanceAudio) {
+      return;
+    }
+
+    final QpcAyahKey? completedAyah = _playingAyah;
+    if (completedAyah == null) {
+      return;
+    }
+
+    _queueAutoAdvanceForCompletedAyah(completedAyah);
+  }
+
+  bool get _canAutoAdvanceAudio {
+    return _autoContinueSurah && !_userStoppedAudio && !_isAutoAdvancingAudio;
+  }
+
+  void _queueAutoAdvanceForCompletedAyah(QpcAyahKey completedAyah) {
+    final QuranAyahAudioInfo? completedInfo = _currentAudioInfo;
+    if (completedInfo == null ||
+        completedInfo.surahNumber != completedAyah.surah ||
+        completedInfo.ayahNumber != completedAyah.ayah ||
+        _lastCompletedAudioAyah == completedAyah) {
+      return;
+    }
+
+    _lastCompletedAudioAyah = completedAyah;
+    _autoNextTimer?.cancel();
+    _autoNextTimer = Timer(const Duration(milliseconds: 120), () {
+      if (!mounted ||
+          _userStoppedAudio ||
+          !_autoContinueSurah ||
+          _playingAyah != completedAyah) {
+        return;
+      }
+
+      unawaited(_playNextAyahInSameSurah(expectedCurrent: completedAyah));
+    });
+  }
+
+  void _handleAudioPosition(Duration position) {
+    final QpcAyahKey? playingAyah = _playingAyah;
+    final QuranAyahAudioInfo? audioInfo = _currentAudioInfo;
+
+    if (playingAyah == null || audioInfo == null) {
+      if (_activeAudioWord != null && mounted) {
+        setState(() {
+          _activeAudioWord = null;
+        });
+      }
+      return;
+    }
+
+    _queueAutoAdvanceNearTrackEnd(position, playingAyah);
+
+    if (_currentPlayingAyahWords.isEmpty) {
+      if (_activeAudioWord != null && mounted) {
+        setState(() {
+          _activeAudioWord = null;
+        });
+      }
+      return;
+    }
+
+    final QuranWordSyncResult result = _wordSyncController.resolveActiveWord(
+      position: position,
+      ayahKey: playingAyah,
+      visibleAyahWords: _currentPlayingAyahWords,
+      segments: audioInfo.segments,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (_activeAudioWord != result.activeWordKey) {
+      setState(() {
+        _activeAudioWord = result.activeWordKey;
+      });
+    }
+  }
+
+  void _queueAutoAdvanceNearTrackEnd(
+    Duration position,
+    QpcAyahKey playingAyah,
+  ) {
+    if (!_canAutoAdvanceAudio || _lastCompletedAudioAyah == playingAyah) {
+      return;
+    }
+
+    final Duration? duration = _audioService.player.duration;
+    if (duration == null || duration.inMilliseconds <= 0) {
+      return;
+    }
+
+    final int remainingMs = duration.inMilliseconds - position.inMilliseconds;
+    if (remainingMs < -500 || remainingMs > 120) {
+      return;
+    }
+
+    _queueAutoAdvanceForCompletedAyah(playingAyah);
+  }
+
+  void _onPageChanged(int pageNumber) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    final int? previousMushafPage = _lastMushafPageNumber;
+
+    QpcAyahKey? ayahToSave;
+    int pageToSave = safePage;
+
+    setState(() {
+      _selectedPageNumber = safePage;
+      _previewAyahKey = null;
+
+      if (!_connectedMode) {
+        // عند عرض المصحف: الآية النشطة للواجهة تكون أول آية في الصفحة الحالية،
+        // لكن تقدم الورد يُحسب من نهاية الصفحة السابقة بعد قلبها.
+        final QpcAyahKey pageAnchor = _pageStartAyahKey(safePage);
+        _anchorAyahKey = pageAnchor;
+
+        if (previousMushafPage != null && previousMushafPage != safePage) {
+          pageToSave = previousMushafPage;
+          ayahToSave = _mushafProgressAyahKeyForPage(previousMushafPage);
+        } else if (safePage == 604) {
+          pageToSave = safePage;
+          ayahToSave = _mushafProgressAyahKeyForPage(safePage);
+        }
+
+        _lastMushafPageNumber = safePage;
+        _selection = null;
+        _activeAudioWord = null;
+      }
+    });
+
+    if (!_connectedMode && ayahToSave != null) {
+      _scheduleReadingPersistence(
+        ayahKey: ayahToSave!,
+        mushafPageNumber: pageToSave,
+        wordCount: _repository.getCachedPage(pageToSave)?.allWords.length,
+        recordStats: true,
+        reason: 'mushaf previous page settled',
+      );
+    }
+
+    _setBottomBarSnapshotForPage(
+      safePage,
+      ayahKey: !_connectedMode ? _anchorAyahKey : null,
+    );
+    _restartControlsAutoHideTimer();
+  }
+
+  void _onPagePreviewChanged(int pageNumber) {
+    if (!mounted || _connectedMode) {
+      return;
+    }
+
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    _scheduleBottomBarPreview(safePage);
+  }
+
+  void _onConnectedAnchorChanged(QpcAyahKey ayahKey, int pageNumber) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+    final bool pageChanged = safePage != _selectedPageNumber;
+
+    setState(() {
+      _anchorAyahKey = ayahKey;
+      _previewAyahKey = null;
+      _selectedPageNumber = safePage;
+    });
+    _setBottomBarSnapshotForPage(safePage, ayahKey: ayahKey);
+
+    _scheduleReadingPersistence(
+      ayahKey: ayahKey,
+      mushafPageNumber: safePage,
+      recordStats: pageChanged,
+      reason: 'connected anchor settled',
+    );
+  }
+
+  void _onPageDataReady(QpcPageData pageData) {
+    if (!mounted || pageData.pageNumber != _selectedPageNumber) {
+      return;
+    }
+
+    if (_visiblePageData?.pageNumber != pageData.pageNumber) {
+      setState(() {
+        _visiblePageData = pageData;
+      });
+    }
+    _setBottomBarSnapshotForPage(
+      pageData.pageNumber,
+      ayahKey: _selection?.ayahKey ?? _anchorAyahKey,
+    );
+
+    // في المصحف داخل الورد، الحفظ يتم عند قلب الصفحة السابقة حتى لا نحسب أول آية فقط.
+    if (!(!_connectedMode && _isWirdReader)) {
+      _scheduleReadingPersistenceFromPage(pageData, reason: 'page data ready');
+    }
+  }
+
+  void _scheduleReadingPersistenceFromPage(
+    QpcPageData pageData, {
+    required String reason,
+  }) {
+    QpcAyahKey? targetAyah = _anchorAyahKey;
+
+    if (targetAyah == null || !pageData.containsAyah(targetAyah)) {
+      final QpcWord? firstWord = pageData.allWords.isNotEmpty
+          ? pageData.allWords.first
+          : null;
+      if (firstWord == null) {
+        return;
+      }
+      targetAyah = firstWord.ayahKey;
+    }
+
+    _scheduleReadingPersistence(
+      ayahKey: targetAyah,
+      mushafPageNumber: pageData.pageNumber,
+      wordCount: pageData.allWords.length,
+      recordStats: true,
+      reason: reason,
+    );
+  }
+
+  void _scheduleReadingPersistence({
+    required QpcAyahKey ayahKey,
+    required int mushafPageNumber,
+    int? wordCount,
+    bool recordStats = true,
+    required String reason,
+  }) {
+    _pendingReadingPersistence = _QpcPendingReadingPersistence(
+      ayahKey: ayahKey,
+      mushafPageNumber: mushafPageNumber.clamp(1, 604).toInt(),
+      wordCount: wordCount,
+      recordStats: recordStats,
+      reason: reason,
+    );
+
+    _readingPersistenceTimer?.cancel();
+    _readingPersistenceTimer = Timer(const Duration(milliseconds: 280), () {
+      final _QpcPendingReadingPersistence? pending = _pendingReadingPersistence;
+      if (!mounted || pending == null) {
+        return;
+      }
+
+      _pendingReadingPersistence = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+
+        unawaited(_flushReadingPersistence(pending));
+      });
+    });
+  }
+
+  Future<void> _flushReadingPersistence(
+    _QpcPendingReadingPersistence pending,
+  ) async {
+    await QpcReaderPerf.timeAsync(
+      'persist ${pending.reason} p${pending.mushafPageNumber}',
+      () async {
+        await _saveReadingPosition(
+          ayahKey: pending.ayahKey,
+          mushafPageNumber: pending.mushafPageNumber,
+        );
+
+        if (pending.recordStats) {
+          await QuranReadingStatsStorage.recordReadPage(
+            pending.mushafPageNumber,
+            wordCount: pending.wordCount,
+          );
+        }
+      },
+    );
+  }
+
+  Future<void> _saveReadingPosition({
+    required QpcAyahKey ayahKey,
+    required int mushafPageNumber,
+  }) async {
+    int suraIndex = (ayahKey.surah - 1).clamp(0, 113).toInt();
+    int ayahIndex = (ayahKey.ayah - 1).clamp(0, 286).toInt();
+    int globalAyahIndex = QuranReaderHelpers.getGlobalAyahIndex(
+      suraIndex: suraIndex,
+      ayahIndex: ayahIndex,
+    );
+
+    final int? wirdStart = widget.wirdStartGlobalAyahIndex;
+    final int? wirdEnd = widget.wirdEndGlobalAyahIndex;
+    final int? memorizationStart = widget.memorizationStartGlobalAyahIndex;
+    final int? memorizationEnd = widget.memorizationEndGlobalAyahIndex;
+
+    if (wirdStart != null && wirdEnd != null && wirdStart <= wirdEnd) {
+      globalAyahIndex = globalAyahIndex.clamp(wirdStart, wirdEnd).toInt();
+
+      final QuranAyahPosition position =
+          QuranReaderHelpers.getPositionFromGlobalIndex(globalAyahIndex);
+      suraIndex = position.suraIndex;
+      ayahIndex = position.ayahIndex;
+    }
+
+    if (memorizationStart != null &&
+        memorizationEnd != null &&
+        memorizationStart <= memorizationEnd) {
+      globalAyahIndex = globalAyahIndex
+          .clamp(memorizationStart, memorizationEnd)
+          .toInt();
+
+      final QuranAyahPosition position =
+          QuranReaderHelpers.getPositionFromGlobalIndex(globalAyahIndex);
+      suraIndex = position.suraIndex;
+      ayahIndex = position.ayahIndex;
+    }
+
+    if (widget.saveAsLastRead) {
+      await QuranReaderStorage.saveLastRead(
+        suraIndex: suraIndex,
+        ayahIndex: ayahIndex,
+        viewMode: 'qpc_connected',
+        mushafPageNumber: mushafPageNumber,
+      );
+    }
+
+    if (widget.saveAsMushafOpenProgress) {
+      await QuranReaderStorage.saveMushafOpenProgress(
+        suraIndex: suraIndex,
+        ayahIndex: ayahIndex,
+        viewMode: 'qpc_connected',
+        mushafPageNumber: mushafPageNumber,
+      );
+    }
+
+    final String? wirdPlanId = widget.wirdPlanId;
+    if (wirdPlanId != null && wirdPlanId.trim().isNotEmpty) {
+      await QuranWirdProgressStorage.saveProgress(
+        planId: wirdPlanId,
+        suraIndex: suraIndex,
+        ayahIndex: ayahIndex,
+        mushafPageNumber: mushafPageNumber,
+        viewMode: 'qpc_connected',
+      );
+
+      await _tryAutoCompleteWird(globalAyahIndex: globalAyahIndex);
+    }
+
+    final String? memorizationTaskId = widget.memorizationTaskId;
+    if (memorizationTaskId != null && memorizationTaskId.trim().isNotEmpty) {
+      await QuranMemorizationProgressStorage.saveProgress(
+        taskId: memorizationTaskId,
+        suraIndex: suraIndex,
+        ayahIndex: ayahIndex,
+        globalAyahIndex: globalAyahIndex,
+        mushafPageNumber: mushafPageNumber,
+        viewMode: 'qpc_connected',
+        step: widget.memorizationStep.trim().isEmpty
+            ? 'reading'
+            : widget.memorizationStep,
+      );
+    }
+  }
+
+  Future<void> _tryAutoCompleteWird({required int globalAyahIndex}) async {
+    final String? planId = widget.wirdPlanId;
+    final int? endGlobalAyahIndex = widget.wirdEndGlobalAyahIndex;
+
+    if (planId == null || planId.trim().isEmpty) {
+      return;
+    }
+    if (endGlobalAyahIndex == null) {
+      return;
+    }
+    if (_didAutoCompleteWird) {
+      return;
+    }
+    if (globalAyahIndex < endGlobalAyahIndex) {
+      return;
+    }
+
+    _didAutoCompleteWird = true;
+
+    final List<QuranKhatmaPlan> activePlansBefore =
+        await QuranWirdStorage.getActivePlans();
+    final int planIndex = activePlansBefore.indexWhere(
+      (plan) => plan.id == planId,
+    );
+
+    if (planIndex == -1) {
+      return;
+    }
+
+    final QuranKhatmaPlan currentPlan = activePlansBefore[planIndex];
+    final bool willCompleteKhatma =
+        currentPlan.completedDays + 1 >= currentPlan.totalDays;
+
+    final int startGlobalAyahIndex =
+        widget.wirdStartGlobalAyahIndex ?? endGlobalAyahIndex;
+    final int fromPage = QuranPageMapper.getPageNumberForGlobalAyah(
+      startGlobalAyahIndex,
+    );
+    final int toPage = QuranPageMapper.getPageNumberForGlobalAyah(
+      endGlobalAyahIndex,
+    );
+    final int completedPages = (toPage - fromPage + 1).clamp(1, 604).toInt();
+
+    await QuranWirdStorage.markPlanTodayWirdCompleted(planId);
+    await QuranWirdProgressStorage.clearProgress(planId);
+    await QuranReadingStatsStorage.recordCompletedWird(
+      completedPages: completedPages,
+      completedKhatma: willCompleteKhatma,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    await _stopAudio();
+
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        final QuranReaderTheme theme = _themeController.theme;
+
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: theme.controlsBackgroundColor,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20.r),
+            ),
+            title: Text(
+              willCompleteKhatma
+                  ? 'ما شاء الله! اكتملت الختمة'
+                  : 'ما شاء الله! أنهيت ورد اليوم',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w900,
+                color: theme.controlsTextColor,
+              ),
+            ),
+            content: Text(
+              'ارجع لصفحة الورد لتبدأ وردًا جديدًا، أو افتح المصحف العادي لو عايز تكمل قراءة بدون ما يتلخبط حساب الورد.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'cairo',
+                fontSize: 12.sp,
+                height: 1.6,
+                fontWeight: FontWeight.w700,
+                color: theme.controlsTextColor.withOpacity(0.82),
+              ),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(
+                  'العودة',
+                  style: TextStyle(
+                    fontFamily: 'cairo',
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w900,
+                    color: theme.selectedWordTextColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).maybePop(true);
+  }
+
+  Future<void> _jumpToPage(int pageNumber) async {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+
+    await QuranPageMapper.load();
+    final QpcAyahKey pageAnchor = _pageStartAyahKey(safePage);
+
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(_mushafPageIndex(safePage));
+    }
+
+    setState(() {
+      _selectedPageNumber = safePage;
+      _lastMushafPageNumber = safePage;
+      _anchorAyahKey = pageAnchor;
+      _selection = QuranSelection(ayahKey: pageAnchor);
+      _activeAudioWord = null;
+    });
+
+    _setBottomBarSnapshotForPage(safePage, ayahKey: pageAnchor);
+    _scheduleReadingPersistence(
+      ayahKey: pageAnchor,
+      mushafPageNumber: safePage,
+      wordCount: _repository.getCachedPage(safePage)?.allWords.length,
+      recordStats: true,
+      reason: 'jump to page',
+    );
+
+    _warmUpReaderAssets(safePage, reason: 'jump');
+    _restartControlsAutoHideTimer();
+  }
+
+  void _toggleControls() {
+    setState(() {
+      _controlsVisible = !_controlsVisible;
+    });
+
+    if (_controlsVisible) {
+      _restartControlsAutoHideTimer();
+    } else {
+      _controlsTimer?.cancel();
+    }
+  }
+
+  void _showControls() {
+    if (!_controlsVisible) {
+      setState(() {
+        _controlsVisible = true;
+      });
+    }
+
+    _restartControlsAutoHideTimer();
+  }
+
+  void _toggleAudioPanel() {
+    setState(() {
+      _controlsVisible = true;
+      _audioPanelVisible = !_audioPanelVisible;
+    });
+
+    _restartControlsAutoHideTimer();
+  }
+
+  void _restartControlsAutoHideTimer() {
+    _controlsTimer?.cancel();
+
+    if (_bottomBarInteractionActive) {
+      return;
+    }
+
+    _controlsTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted || _bottomBarInteractionActive) {
+        return;
+      }
+
+      setState(() {
+        _controlsVisible = false;
+      });
+    });
+  }
+
+  void _handleBottomBarInteractionStart() {
+    _controlsTimer?.cancel();
+
+    if (!_controlsVisible || !_bottomBarInteractionActive) {
+      setState(() {
+        _controlsVisible = true;
+        _bottomBarInteractionActive = true;
+      });
+    }
+  }
+
+  void _handleBottomBarInteractionEnd() {
+    if (!_bottomBarInteractionActive) {
+      _restartControlsAutoHideTimer();
+      return;
+    }
+
+    setState(() {
+      _bottomBarInteractionActive = false;
+    });
+
+    _restartControlsAutoHideTimer();
+  }
+
+  void _toggleHideMode() {
+    setState(() {
+      _hideMode = _hideMode.next();
+    });
+
+    _showControls();
+  }
+
+  void _toggleWaqfHighlight() {
+    setState(() {
+      _waqfHighlightEnabled = !_waqfHighlightEnabled;
+    });
+
+    _showControls();
+  }
+
+  void _increaseFont() {
+    setState(() {
+      _fontScale = (_fontScale + 0.03).clamp(0.92, 1.08).toDouble();
+    });
+
+    _showControls();
+  }
+
+  void _decreaseFont() {
+    setState(() {
+      _fontScale = (_fontScale - 0.03).clamp(0.92, 1.08).toDouble();
+    });
+
+    _showControls();
+  }
+
+  Future<void> _toggleConnectedMode() async {
+    await QuranPageMapper.load();
+
+    final bool switchingToMushaf = _connectedMode;
+
+    // _anchorAyahKey is the live ayah coming from the connected text reader.
+    // Do not prefer _selection here, because _selection can be an old tap
+    // selection from the mushaf page and it breaks text -> mushaf syncing.
+    final QpcAyahKey anchor =
+        _anchorAyahKey ??
+        _selection?.ayahKey ??
+        _pageStartAyahKey(_selectedPageNumber);
+    final int pageNumber = _pageNumberForAyah(anchor);
+
+    setState(() {
+      _connectedMode = !_connectedMode;
+      _previewAyahKey = null;
+      _anchorAyahKey = anchor;
+      _selectedPageNumber = pageNumber;
+      _selection = QuranSelection(ayahKey: anchor);
+      _controlsVisible = true;
+
+      if (switchingToMushaf) {
+        _lastMushafPageNumber = pageNumber;
+      }
+    });
+
+    if (switchingToMushaf) {
+      _jumpMushafControllerToPage(pageNumber);
+      _setBottomBarSnapshotForPage(pageNumber, ayahKey: anchor);
+      _warmUpReaderAssets(pageNumber, reason: 'switch to mushaf');
+    }
+
+    _showControls();
+    _showInfoSnackBar(_connectedMode ? 'وضع نصي متصل' : 'وضع مصحف');
+  }
+
+  void _jumpMushafControllerToPage(int pageNumber) {
+    final int safePage = pageNumber.clamp(1, 604).toInt();
+
+    void jumpNow() {
+      if (!mounted || !_pageController.hasClients) {
+        return;
+      }
+
+      final int targetIndex = _mushafPageIndex(safePage);
+      final int currentIndex =
+          (_pageController.page ?? _pageController.initialPage.toDouble())
+              .round();
+
+      if (currentIndex != targetIndex) {
+        _pageController.jumpToPage(targetIndex);
+      }
+    }
+
+    jumpNow();
+
+    // When switching from connected text mode, the PageView is mounted only
+    // after setState finishes. This post-frame jump is what keeps the visual
+    // mushaf page synced with the bottom bar and the current ayah.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      jumpNow();
+    });
+  }
+
+  Future<void> _saveCurrentSurahBookmark() async {
+    final QpcAyahKey anchor =
+        _anchorAyahKey ?? _pageStartAyahKey(_selectedPageNumber);
+
+    final int surah = anchor.surah;
+    final int ayah = anchor.ayah;
+
+    await QuranBookmarkStorage.addBookmark(
+      QuranBookmark(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        suraIndex: surah - 1,
+        ayahIndex: ayah - 1,
+        mushafPageNumber: _selectedPageNumber,
+        viewMode: 'qpc_connected',
+        createdAt: DateTime.now().toIso8601String(),
+      ),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    _showControls();
+    _showInfoSnackBar('تم حفظ الموضع');
+  }
+
+  Future<void> _openIndexPage() async {
+    _showControls();
+
+    await Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return const IndexPage();
+        },
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
+  Future<void> _openSearch() async {
+    _showControls();
+
+    final QpcAyahKey? target = await Navigator.of(context).push<QpcAyahKey>(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return QpcAyahSearchPage(
+            readerTheme: _themeController.theme,
+            currentAyahKey:
+                _anchorAyahKey ?? _selection?.ayahKey ?? _playingAyah,
+          );
+        },
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    if (target == null || !mounted) {
+      return;
+    }
+
+    await QuranPageMapper.load();
+    final int pageNumber = _pageNumberForAyah(target);
+
+    if (!_connectedMode) {
+      _lastMushafPageNumber = pageNumber;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(_mushafPageIndex(pageNumber));
+      }
+    }
+
+    setState(() {
+      _anchorAyahKey = target;
+      _selectedPageNumber = pageNumber;
+      _selection = QuranSelection(ayahKey: target);
+      _audioPanelVisible = false;
+      _controlsVisible = true;
+      _activeAudioWord = null;
+    });
+
+    _setBottomBarSnapshotForPage(pageNumber, ayahKey: target);
+    _scheduleReadingPersistence(
+      ayahKey: target,
+      mushafPageNumber: pageNumber,
+      wordCount: _repository.getCachedPage(pageNumber)?.allWords.length,
+      recordStats: true,
+      reason: 'search jump',
+    );
+    if (!_connectedMode) {
+      _warmUpReaderAssets(pageNumber, reason: 'search jump');
+    }
+
+    _restartControlsAutoHideTimer();
+  }
+
+  /// البحث بالنص عبر API مجانية
+  Future<List<_AyahSearchResult>> _searchAyahByText(String query) async {
+    try {
+      final encodedQuery = Uri.encodeComponent(query);
+      final uri = Uri.parse(
+        'https://api.alquran.cloud/v1/search/$encodedQuery/all/ar',
+      );
+
+      final http.Response response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) {
+        return [];
+      }
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is! Map) return [];
+
+      final dynamic data = decoded['data'];
+      if (data is! Map) return [];
+
+      final dynamic matches = data['matches'];
+      if (matches is! List) return [];
+
+      final List<_AyahSearchResult> results = [];
+
+      for (final dynamic match in matches.take(8)) {
+        if (match is! Map) continue;
+
+        final dynamic surahData = match['surah'];
+        final dynamic ayahNumber = match['numberInSurah'];
+        final dynamic text = match['text'];
+
+        if (surahData is! Map) continue;
+
+        final int? surahNumber = int.tryParse(surahData['number'].toString());
+        final int? ayahNum = int.tryParse(ayahNumber.toString());
+
+        if (surahNumber == null || ayahNum == null) continue;
+        if (surahNumber < 1 || surahNumber > 114) continue;
+
+        final int ayahCount = noOfVerses[surahNumber - 1];
+        if (ayahNum < 1 || ayahNum > ayahCount) continue;
+
+        final String surahName =
+            surahData['name']?.toString() ?? 'سورة $surahNumber';
+
+        results.add(
+          _AyahSearchResult(
+            ayahKey: QpcAyahKey(surah: surahNumber, ayah: ayahNum),
+            displayText: '$surahName - آية $ayahNum',
+            ayahText: text?.toString(),
+          ),
+        );
+      }
+
+      return results;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  QpcAyahKey? _parseAyahSearch(String rawInput) {
+    final Iterable<int> numbers = RegExp(r'\d+')
+        .allMatches(rawInput)
+        .map((match) => int.tryParse(match.group(0) ?? ''))
+        .whereType<int>();
+    final List<int> parts = numbers.toList(growable: false);
+
+    if (parts.length < 2) {
+      return null;
+    }
+
+    final int surah = parts[0];
+    final int ayah = parts[1];
+
+    if (surah < 1 || surah > 114) {
+      return null;
+    }
+
+    final int ayahCount = noOfVerses[surah - 1];
+    if (ayah < 1 || ayah > ayahCount) {
+      return null;
+    }
+
+    return QpcAyahKey(surah: surah, ayah: ayah);
+  }
+
+  Future<void> _openReaderSettings() async {
+    _showControls();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _themeController.theme.pageBackground,
+      barrierColor: Colors.black.withOpacity(0.28),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22.r)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return AnimatedBuilder(
+              animation: _themeController,
+              builder: (context, _) {
+                final QuranReaderTheme activeTheme = _themeController.theme;
+                final bool isLargeSheet =
+                    MediaQuery.sizeOf(context).width >= 600;
+                final double sheetHeightFactor = isLargeSheet ? 0.58 : 0.72;
+                final EdgeInsetsGeometry sheetPadding = isLargeSheet
+                    ? const EdgeInsets.fromLTRB(16, 4, 16, 14)
+                    : EdgeInsets.fromLTRB(16.w, 4.h, 16.w, 18.h);
+
+                return Directionality(
+                  textDirection: TextDirection.rtl,
+                  child: FractionallySizedBox(
+                    heightFactor: sheetHeightFactor,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: activeTheme.pageBackground,
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(22.r),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: sheetPadding,
+                        child: ListView(
+                          children: [
+                            Text(
+                              'إعدادات القراءة',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontFamily: 'cairo',
+                                fontSize: isLargeSheet ? 13 : 15.sp,
+                                fontWeight: FontWeight.w900,
+                                color: activeTheme.textColor,
+                              ),
+                            ),
+                            SizedBox(height: isLargeSheet ? 9 : 14.h),
+                            _SettingsTitle(
+                              title: 'وضع القراءة',
+                              readerTheme: activeTheme,
+                            ),
+                            SizedBox(height: isLargeSheet ? 6 : 8.h),
+                            _SettingsTile(
+                              icon: Icons.compare_arrows_rounded,
+                              title: _connectedMode
+                                  ? 'وضع نصي متصل'
+                                  : 'وضع المصحف',
+                              subtitle: '',
+                              readerTheme: activeTheme,
+                              onTap: () {
+                                unawaited(_toggleConnectedMode());
+                              },
+                            ),
+                            if (_connectedMode) ...[
+                              SizedBox(height: isLargeSheet ? 9 : 14.h),
+                              _SettingsTitle(
+                                title: 'حجم الخط (وضع متصل)',
+                                readerTheme: activeTheme,
+                              ),
+                              SizedBox(height: isLargeSheet ? 6 : 8.h),
+                              _FontScaleSlider(
+                                readerTheme: activeTheme,
+                                value: _fontScale,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _fontScale = value
+                                        .clamp(0.92, 1.18)
+                                        .toDouble();
+                                  });
+                                  setSheetState(() {});
+                                  _showControls();
+                                },
+                              ),
+                            ],
+                            if (!_connectedMode) ...[
+                              SizedBox(height: isLargeSheet ? 9 : 14.h),
+                              _SettingsTitle(
+                                title: 'تمييز الوقف',
+                                readerTheme: activeTheme,
+                              ),
+                              SizedBox(height: isLargeSheet ? 6 : 8.h),
+                              _SettingsTile(
+                                icon: _waqfHighlightEnabled
+                                    ? Icons.check_circle_rounded
+                                    : Icons.pause_circle_outline_rounded,
+                                title: _waqfHighlightEnabled
+                                    ? 'تمييز علامات الوقف مفعل'
+                                    : 'تمييز علامات الوقف',
+                                subtitle: '',
+                                readerTheme: activeTheme,
+                                onTap: () {
+                                  _toggleWaqfHighlight();
+                                  setSheetState(() {});
+                                },
+                              ),
+                            ],
+                            SizedBox(height: isLargeSheet ? 9 : 14.h),
+                            _SettingsTitle(
+                              title: 'القارئ',
+                              readerTheme: activeTheme,
+                            ),
+                            SizedBox(height: isLargeSheet ? 6 : 8.h),
+                            ...QuranAyahAudioService.reciters.map((reciter) {
+                              final bool selected =
+                                  reciter.id == _audioService.currentReciter.id;
+
+                              return Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: isLargeSheet ? 6 : 8.h,
+                                ),
+                                child: _SettingsTile(
+                                  icon: selected
+                                      ? Icons.check_circle_rounded
+                                      : Icons.record_voice_over_rounded,
+                                  title: reciter.name,
+                                  subtitle: selected ? 'القارئ الحالي' : '',
+                                  readerTheme: activeTheme,
+                                  onTap: () async {
+                                    await _selectReciter(reciter);
+
+                                    if (context.mounted) {
+                                      setSheetState(() {});
+                                    }
+                                  },
+                                ),
+                              );
+                            }),
+                            SizedBox(height: isLargeSheet ? 9 : 14.h),
+                            _SettingsTitle(
+                              title: 'ألوان القراءة',
+                              readerTheme: activeTheme,
+                            ),
+                            SizedBox(height: isLargeSheet ? 6 : 8.h),
+                            ...QuranReaderTheme.all.map((readerTheme) {
+                              final bool selected =
+                                  readerTheme.id == activeTheme.id;
+
+                              return Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: isLargeSheet ? 6 : 8.h,
+                                ),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(
+                                    isLargeSheet ? 13 : 16.r,
+                                  ),
+                                  onTap: () {
+                                    unawaited(
+                                      _themeController.setTheme(readerTheme.id),
+                                    );
+                                    setSheetState(() {});
+                                  },
+                                  child: Container(
+                                    padding: isLargeSheet
+                                        ? const EdgeInsets.all(9)
+                                        : EdgeInsets.all(12.w),
+                                    decoration: BoxDecoration(
+                                      color: readerTheme.pageBackground,
+                                      borderRadius: BorderRadius.circular(
+                                        isLargeSheet ? 13 : 16.r,
+                                      ),
+                                      border: Border.all(
+                                        color: selected
+                                            ? readerTheme.selectedWordTextColor
+                                            : readerTheme.pageBadgeBorder
+                                                  .withOpacity(0.45),
+                                        width: selected ? 2 : 1,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: isLargeSheet ? 22 : 28.w,
+                                          height: isLargeSheet ? 22 : 28.w,
+                                          decoration: BoxDecoration(
+                                            color: readerTheme.pageBackground,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color:
+                                                  readerTheme.pageBadgeBorder,
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: isLargeSheet ? 8 : 10.w,
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            readerTheme.label,
+                                            style: TextStyle(
+                                              fontFamily: 'cairo',
+                                              fontSize: isLargeSheet
+                                                  ? 10
+                                                  : 13.sp,
+                                              fontWeight: FontWeight.w900,
+                                              color: readerTheme.textColor,
+                                            ),
+                                          ),
+                                        ),
+                                        if (selected)
+                                          Icon(
+                                            Icons.check_circle_rounded,
+                                            color: readerTheme
+                                                .selectedWordTextColor,
+                                            size: isLargeSheet ? 17 : 20.sp,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _onWordTap(QpcLineTapResult result) async {
+    final QuranSelection selection = QuranSelection(ayahKey: result.ayahKey);
+
+    setState(() {
+      _previewAyahKey = null;
+      _anchorAyahKey = result.ayahKey;
+      _selection = selection;
+      _controlsVisible = true;
+      _audioPanelVisible = true;
+    });
+
+    unawaited(
+      _saveReadingPosition(
+        ayahKey: result.ayahKey,
+        mushafPageNumber: _selectedPageNumber,
+      ),
+    );
+
+    _restartControlsAutoHideTimer();
+    await _showSelectionActions(selection);
+  }
+
+  Future<void> _showSelectionActions(QuranSelection selection) async {
+    final QuranReaderTheme theme = _themeController.theme;
+    final Future<QuranAyahSheetText?> ayahTextFuture =
+        QuranAyahSheetTextRepository.instance.getAyahText(
+          surah: selection.surah,
+          ayah: selection.ayah,
+        );
+
+    final _QuranSelectionAction?
+    action = await showModalBottomSheet<_QuranSelectionAction>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: theme.controlsBackgroundColor,
+      barrierColor: Colors.black.withOpacity(0.18),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22.r)),
+      ),
+      builder: (context) {
+        final bool isLargeSheet = MediaQuery.sizeOf(context).width >= 600;
+        final double maxSheetHeight =
+            MediaQuery.sizeOf(context).height * (isLargeSheet ? 0.52 : 0.78);
+        final EdgeInsetsGeometry sheetPadding = isLargeSheet
+            ? const EdgeInsets.fromLTRB(16, 4, 16, 14)
+            : EdgeInsets.fromLTRB(16.w, 4.h, 16.w, 18.h);
+
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.controlsBackgroundColor,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(22.r)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxSheetHeight),
+                child: SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  padding: sheetPadding,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        selection.readableArabicLabel,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: 'cairo',
+                          fontSize: isLargeSheet ? 12 : 14.sp,
+                          fontWeight: FontWeight.w900,
+                          color: theme.textColor,
+                        ),
+                      ),
+                      SizedBox(height: isLargeSheet ? 8 : 12.h),
+                      _SelectionAyahTextPreview(
+                        future: ayahTextFuture,
+                        readerTheme: theme,
+                        isLargeSheet: isLargeSheet,
+                      ),
+                      SizedBox(height: isLargeSheet ? 8 : 12.h),
+                      _SelectionActionTile(
+                        icon: Icons.play_circle_fill_rounded,
+                        title: 'تشغيل الآية',
+                        subtitle:
+                            'استماع للآية بالقارئ المختار مع تمييز موضع القراءة',
+                        readerTheme: theme,
+                        onTap: () {
+                          Navigator.of(context).pop(_QuranSelectionAction.play);
+                        },
+                      ),
+                      _SelectionActionTile(
+                        icon: Icons.menu_book_rounded,
+                        title: 'التفسير',
+                        subtitle: 'الوسيط، ابن كثير، الطبري، القرطبي...',
+                        readerTheme: theme,
+                        onTap: () {
+                          Navigator.of(
+                            context,
+                          ).pop(_QuranSelectionAction.tafsir);
+                        },
+                      ),
+                      _SelectionActionTile(
+                        icon: Icons.auto_stories_rounded,
+                        title: 'الإعراب',
+                        subtitle: 'الدرويش، الإعراب الميسر، ومصادر أخرى',
+                        readerTheme: theme,
+                        onTap: () {
+                          Navigator.of(context).pop(_QuranSelectionAction.irab);
+                        },
+                      ),
+                      _SelectionActionTile(
+                        icon: Icons.close_rounded,
+                        title: 'إلغاء التحديد',
+                        subtitle: 'إزالة تحديد الآية',
+                        readerTheme: theme,
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          setState(() {
+                            _selection = null;
+                            _activeAudioWord = null;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || action == null) {
+      return;
+    }
+
+    switch (action) {
+      case _QuranSelectionAction.play:
+        await _playAyah(selection.ayahKey);
+        break;
+      case _QuranSelectionAction.tafsir:
+        await showQuranTafsirSheet(
+          context: context,
+          selection: selection,
+          readerTheme: theme,
+        );
+        break;
+      case _QuranSelectionAction.irab:
+        await showQuranIrabSheet(
+          context: context,
+          selection: selection,
+          readerTheme: theme,
+        );
+        break;
+      case _QuranSelectionAction.clear:
+        setState(() {
+          _selection = null;
+          _activeAudioWord = null;
+          _audioPanelVisible = false;
+        });
+        break;
+    }
+  }
+
+  Future<void> _playAyah(
+    QpcAyahKey ayahKey, {
+    bool continueSurah = true,
+  }) async {
+    final int requestToken = ++_audioRequestToken;
+    _autoNextTimer?.cancel();
+    _lastCompletedAudioAyah = null;
+
+    unawaited(
+      _saveReadingPosition(
+        ayahKey: ayahKey,
+        mushafPageNumber: _selectedPageNumber,
+      ),
+    );
+
+    setState(() {
+      _isAudioLoading = true;
+      _autoContinueSurah = continueSurah;
+      _userStoppedAudio = false;
+      _playingAyah = ayahKey;
+      _anchorAyahKey = ayahKey;
+      _selection = QuranSelection(ayahKey: ayahKey);
+      _activeAudioWord = null;
+      _currentAudioInfo = null;
+      _currentPlayingAyahWords = <QpcWord>[];
+    });
+
+    try {
+      final QpcPageData? pageData = _visiblePageData;
+      final List<QpcWord> ayahWords =
+          pageData != null && pageData.containsAyah(ayahKey)
+          ? pageData.wordsForAyah(ayahKey)
+          : await _repository.loadAyahWords(
+              surahNumber: ayahKey.surah,
+              ayahNumber: ayahKey.ayah,
+            );
+
+      if (!mounted || requestToken != _audioRequestToken) {
+        return;
+      }
+
+      final QuranAyahAudioInfo? info = await _audioService.playAyah(
+        surahNumber: ayahKey.surah,
+        ayahNumber: ayahKey.ayah,
+      );
+
+      await _audioService.player.setVolume(_volume);
+
+      if (!mounted || requestToken != _audioRequestToken) {
+        return;
+      }
+
+      if (info == null) {
+        setState(() {
+          _playingAyah = null;
+          _isAudioPlaying = false;
+          _currentAudioInfo = null;
+          _currentPlayingAyahWords = <QpcWord>[];
+        });
+
+        _showInfoSnackBar('لم يتم العثور على صوت الآية', isError: true);
+        return;
+      }
+
+      setState(() {
+        _audioPanelVisible = true;
+        _currentAudioInfo = info;
+        _reciterName = info.reciter.name;
+        _currentPlayingAyahWords = ayahWords;
+      });
+    } catch (_) {
+      if (!mounted || requestToken != _audioRequestToken) {
+        return;
+      }
+
+      setState(() {
+        _playingAyah = null;
+        _isAudioPlaying = false;
+        _currentAudioInfo = null;
+        _currentPlayingAyahWords = <QpcWord>[];
+      });
+
+      _showInfoSnackBar('حصل خطأ أثناء تشغيل الصوت', isError: true);
+    } finally {
+      if (mounted && requestToken == _audioRequestToken) {
+        setState(() {
+          _isAudioLoading = false;
+        });
+      }
+    }
+  }
+
+  QpcAyahKey? _currentAudioTargetAyah() {
+    return _selection?.ayahKey ?? _playingAyah ?? _anchorAyahKey;
+  }
+
+  QpcAyahKey? _offsetAyah(QpcAyahKey ayahKey, int offset) {
+    final int suraIndex = (ayahKey.surah - 1).clamp(0, 113).toInt();
+    final int ayahIndex = (ayahKey.ayah - 1).clamp(0, 286).toInt();
+    final int globalAyahIndex = QuranReaderHelpers.getGlobalAyahIndex(
+      suraIndex: suraIndex,
+      ayahIndex: ayahIndex,
+    );
+
+    if (globalAyahIndex < 0) {
+      return null;
+    }
+
+    final int targetGlobalAyahIndex = globalAyahIndex + offset;
+    if (targetGlobalAyahIndex < 0 ||
+        targetGlobalAyahIndex >= QuranReaderHelpers.totalAyahs) {
+      return null;
+    }
+
+    final QuranAyahPosition position =
+        QuranReaderHelpers.getPositionFromGlobalIndex(targetGlobalAyahIndex);
+
+    return QpcAyahKey(
+      surah: position.suraIndex + 1,
+      ayah: position.ayahIndex + 1,
+    );
+  }
+
+  Future<void> _playCurrentAudioTarget() async {
+    final QpcAyahKey? ayahKey = _currentAudioTargetAyah();
+    if (ayahKey == null) {
+      return;
+    }
+
+    if (_currentAudioInfo != null && _playingAyah == ayahKey) {
+      if (_audioService.player.playing) {
+        _autoNextTimer?.cancel();
+        _autoContinueSurah = false;
+        _userStoppedAudio = true;
+        await _audioService.pause();
+        if (mounted) {
+          setState(() {
+            _isAudioPlaying = false;
+          });
+        }
+      } else {
+        if (_audioService.player.processingState == ProcessingState.completed) {
+          await _playAyah(ayahKey, continueSurah: true);
+          return;
+        }
+
+        _autoContinueSurah = true;
+        _userStoppedAudio = false;
+        await _audioService.resume();
+        if (mounted) {
+          setState(() {
+            _isAudioPlaying = true;
+          });
+        }
+      }
+      return;
+    }
+
+    await _playAyah(ayahKey, continueSurah: true);
+  }
+
+  Future<void> _replayCurrentAyah() async {
+    final QpcAyahKey? ayahKey = _currentAudioTargetAyah();
+    if (ayahKey == null) {
+      return;
+    }
+
+    await _playAyah(ayahKey, continueSurah: true);
+  }
+
+  Future<void> _playPreviousAyah() async {
+    final QpcAyahKey? ayahKey = _currentAudioTargetAyah();
+    if (ayahKey == null) {
+      return;
+    }
+
+    final QpcAyahKey? previousAyah = _offsetAyah(ayahKey, -1);
+    if (previousAyah == null) {
+      return;
+    }
+
+    final int pageNumber = _pageNumberForAyah(previousAyah);
+    if (!_connectedMode) {
+      _lastMushafPageNumber = pageNumber;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(_mushafPageIndex(pageNumber));
+      }
+    }
+
+    setState(() {
+      _anchorAyahKey = previousAyah;
+      _selectedPageNumber = pageNumber;
+      _selection = QuranSelection(ayahKey: previousAyah);
+    });
+    _setBottomBarSnapshotForPage(pageNumber, ayahKey: previousAyah);
+    if (!_connectedMode) {
+      _warmUpReaderAssets(pageNumber, reason: 'audio previous');
+    }
+
+    await _playAyah(previousAyah, continueSurah: true);
+  }
+
+  Future<void> _playNextAyah() async {
+    final QpcAyahKey? ayahKey = _currentAudioTargetAyah();
+    if (ayahKey == null) {
+      return;
+    }
+
+    final QpcAyahKey? nextAyah = _offsetAyah(ayahKey, 1);
+    if (nextAyah == null) {
+      return;
+    }
+
+    final int pageNumber = _pageNumberForAyah(nextAyah);
+    if (!_connectedMode) {
+      _lastMushafPageNumber = pageNumber;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(_mushafPageIndex(pageNumber));
+      }
+    }
+
+    setState(() {
+      _anchorAyahKey = nextAyah;
+      _selectedPageNumber = pageNumber;
+      _selection = QuranSelection(ayahKey: nextAyah);
+    });
+    _setBottomBarSnapshotForPage(pageNumber, ayahKey: nextAyah);
+    if (!_connectedMode) {
+      _warmUpReaderAssets(pageNumber, reason: 'audio next');
+    }
+
+    await _playAyah(nextAyah, continueSurah: true);
+  }
+
+  Future<void> _playNextAyahInSameSurah({QpcAyahKey? expectedCurrent}) async {
+    if (_isAutoAdvancingAudio) {
+      return;
+    }
+
+    final QpcAyahKey? current = _playingAyah;
+    if (current == null) {
+      return;
+    }
+
+    if (expectedCurrent != null && current != expectedCurrent) {
+      return;
+    }
+
+    _isAutoAdvancingAudio = true;
+
+    try {
+      final QpcAyahKey? next = _offsetAyah(current, 1);
+      if (next == null) {
+        await _stopAudio();
+        return;
+      }
+
+      final int pageNumber = _pageNumberForAyah(next);
+      if (!_connectedMode) {
+        _lastMushafPageNumber = pageNumber;
+        if (_pageController.hasClients && pageNumber != _selectedPageNumber) {
+          _pageController.jumpToPage(_mushafPageIndex(pageNumber));
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _anchorAyahKey = next;
+          _selectedPageNumber = pageNumber;
+          _selection = QuranSelection(ayahKey: next);
+        });
+        _setBottomBarSnapshotForPage(pageNumber, ayahKey: next);
+        if (!_connectedMode) {
+          _warmUpReaderAssets(pageNumber, reason: 'audio auto next');
+        }
+      }
+
+      await _playAyah(next, continueSurah: true);
+    } finally {
+      _isAutoAdvancingAudio = false;
+    }
+  }
+
+  Future<void> _stopAudio({bool hidePanel = true}) async {
+    _audioRequestToken++;
+    _autoNextTimer?.cancel();
+    _lastCompletedAudioAyah = null;
+    _userStoppedAudio = true;
+    _autoContinueSurah = false;
+    await _audioService.stop();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _playingAyah = null;
+      _activeAudioWord = null;
+      _currentAudioInfo = null;
+      _currentPlayingAyahWords = <QpcWord>[];
+      _isAudioLoading = false;
+      _isAudioPlaying = false;
+      if (hidePanel) {
+        _audioPanelVisible = false;
+      }
+    });
+  }
+
+  Future<void> _changeVolume(double value) async {
+    final double safeValue = value.clamp(0.0, 1.0).toDouble();
+
+    setState(() {
+      _volume = safeValue;
+    });
+
+    await _audioService.player.setVolume(safeValue);
+    _showControls();
+  }
+
+  Future<void> _selectReciter(QuranAyahReciter reciter) async {
+    await _audioService.setReciter(reciter);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _reciterName = reciter.name;
+      _playingAyah = null;
+      _activeAudioWord = null;
+      _currentAudioInfo = null;
+      _currentPlayingAyahWords = <QpcWord>[];
+      _audioPanelVisible = false;
+    });
+
+    _showControls();
+  }
+
+  void _showInfoSnackBar(String message, {bool isError = false}) {
+    if (!mounted) {
+      return;
+    }
+
+    final QuranReaderTheme theme = _themeController.theme;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 1400),
+        backgroundColor: isError
+            ? Colors.red.shade700
+            : theme.controlsBackgroundColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14.r),
+        ),
+        content: Text(
+          message,
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'cairo',
+            color: theme.controlsTextColor,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String get _currentSuraName {
+    final QpcAyahKey? displayKey = _connectedMode
+        ? (_anchorAyahKey ?? _selection?.ayahKey ?? _playingAyah)
+        : (_selection?.ayahKey ??
+              _previewAyahKey ??
+              _anchorAyahKey ??
+              _playingAyah);
+
+    final int? surah = displayKey?.surah;
+
+    if (surah != null && surah >= 1 && surah <= 114) {
+      return QuranReaderHelpers.getSuraName(surah - 1);
+    }
+
+    final QpcPageData? pageData = _visiblePageData;
+    if (pageData != null && pageData.allWords.isNotEmpty) {
+      final int pageSurah = pageData.allWords.first.surah;
+      if (pageSurah >= 1 && pageSurah <= 114) {
+        return QuranReaderHelpers.getSuraName(pageSurah - 1);
+      }
+    }
+
+    return 'الفاتحة';
+  }
+
+  int get _currentJuzNumber {
+    final QpcAyahKey? ayahKey = _connectedMode
+        ? (_anchorAyahKey ?? _selection?.ayahKey ?? _playingAyah)
+        : (_selection?.ayahKey ??
+              _previewAyahKey ??
+              _anchorAyahKey ??
+              _playingAyah);
+
+    if (ayahKey != null) {
+      return QuranReaderHelpers.getJuzNumber(
+        suraIndex: (ayahKey.surah - 1).clamp(0, 113).toInt(),
+        ayahIndex: (ayahKey.ayah - 1).clamp(0, 286).toInt(),
+      );
+    }
+
+    int result = 1;
+
+    for (int index = 0; index < _juzStartPages.length; index++) {
+      if (_selectedPageNumber >= _juzStartPages[index]) {
+        result = index + 1;
+      } else {
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _themeController,
+      builder: (context, _) {
+        final QuranReaderTheme theme = _themeController.theme;
+        final QpcAyahKey? audioTargetAyah = _currentAudioTargetAyah();
+        final bool showAudioBar =
+            _audioPanelVisible && (audioTargetAyah != null || _isAudioLoading);
+        final Size screenSize = MediaQuery.sizeOf(context);
+        final bool isLargeReader = screenSize.width >= 600;
+
+        return Scaffold(
+          backgroundColor: theme.pageBackground,
+          body: SafeArea(
+            child: isLargeReader
+                ? _buildLargeReaderLayout(
+                    context: context,
+                    theme: theme,
+                    audioTargetAyah: audioTargetAyah,
+                    showAudioBar: showAudioBar,
+                  )
+                : _buildPhoneReaderLayout(
+                    context: context,
+                    theme: theme,
+                    audioTargetAyah: audioTargetAyah,
+                    showAudioBar: showAudioBar,
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPhoneReaderLayout({
+    required BuildContext context,
+    required QuranReaderTheme theme,
+    required QpcAyahKey? audioTargetAyah,
+    required bool showAudioBar,
+  }) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: QpcMushafPageView(
+            pageController: _pageController,
+            selectedPageNumber: _selectedPageNumber,
+            readerTheme: theme,
+            hideMode: _hideMode,
+            waqfHighlightEnabled: _waqfHighlightEnabled,
+            selection: _selection,
+            activeAudioWord: _activeAudioWord,
+            fontScale: _fontScale,
+            connectedMode: _connectedMode,
+            anchorAyahKey: _anchorAyahKey,
+            onPageChanged: _onPageChanged,
+            onPagePreviewChanged: _onPagePreviewChanged,
+            onWordTap: _onWordTap,
+            onToggleControls: _toggleControls,
+            onPageLongPress: _toggleAudioPanel,
+            onPageDataReady: _onPageDataReady,
+            onConnectedAnchorChanged: _onConnectedAnchorChanged,
+          ),
+        ),
+        Positioned(
+          top: 20.h,
+          left: 12.w,
+          right: 12.w,
+          child: QpcTopControlsBar(
+            visible: _controlsVisible,
+            readerTheme: theme,
+            connectedMode: _connectedMode,
+            onBack: () => Navigator.of(context).maybePop(),
+            onSearch: _openSearch,
+            onIndex: _openIndexPage,
+            onSettings: _openReaderSettings,
+            onSaveSurah: _saveCurrentSurahBookmark,
+            onToggleConnectedMode: () {
+              unawaited(_toggleConnectedMode());
+            },
+          ),
+        ),
+        Positioned.fill(
+          child: _buildPageInfoHeader(theme, isLargeScreen: false),
+        ),
+        Positioned(
+          right: 18.w,
+          bottom: showAudioBar ? 142.h : 66.h,
+          child: QpcFloatingHideButton(
+            visible: _controlsVisible,
+            hideMode: _hideMode,
+            readerTheme: theme,
+            onTap: _toggleHideMode,
+          ),
+        ),
+        if (showAudioBar)
+          Positioned(
+            left: 18.w,
+            right: 18.w,
+            bottom: 68.h,
+            child: QpcAudioControlBar(
+              readerTheme: theme,
+              reciterName: _reciterName,
+              volume: _volume,
+              isLoading: _isAudioLoading,
+              isPlaying: _isAudioPlaying,
+              ayahKey: audioTargetAyah,
+              activeWord: _activeAudioWord,
+              onVolumeChanged: _changeVolume,
+              onPlay: () {
+                unawaited(_playCurrentAudioTarget());
+              },
+              onPrevious: () {
+                unawaited(_playPreviousAyah());
+              },
+              onNext: () {
+                unawaited(_playNextAyah());
+              },
+              onReplay: () {
+                unawaited(_replayCurrentAyah());
+              },
+              onStop: () {
+                unawaited(_stopAudio());
+              },
+            ),
+          ),
+        Positioned(
+          left: 18.w,
+          right: 18.w,
+          bottom: 14.h,
+          child: _buildBottomReaderBar(theme),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLargeReaderLayout({
+    required BuildContext context,
+    required QuranReaderTheme theme,
+    required QpcAyahKey? audioTargetAyah,
+    required bool showAudioBar,
+  }) {
+    const double railWidth = 136;
+    const double outerGap = 10;
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          right: railWidth + outerGap,
+          left: 0,
+          top: 0,
+          bottom: 0,
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: theme.pageBackground,
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(18),
+                bottomRight: Radius.circular(18),
+              ),
+              border: Border(
+                right: BorderSide(
+                  color: theme.dividerColor.withOpacity(0.45),
+                  width: 1,
+                ),
+              ),
+            ),
+            child: QpcMushafPageView(
+              pageController: _pageController,
+              selectedPageNumber: _selectedPageNumber,
+              readerTheme: theme,
+              hideMode: _hideMode,
+              waqfHighlightEnabled: _waqfHighlightEnabled,
+              selection: _selection,
+              activeAudioWord: _activeAudioWord,
+              fontScale: _fontScale,
+              connectedMode: _connectedMode,
+              anchorAyahKey: _anchorAyahKey,
+              onPageChanged: _onPageChanged,
+              onPagePreviewChanged: _onPagePreviewChanged,
+              onWordTap: _onWordTap,
+              onToggleControls: _toggleControls,
+              onPageLongPress: _toggleAudioPanel,
+              onPageDataReady: _onPageDataReady,
+              onConnectedAnchorChanged: _onConnectedAnchorChanged,
+            ),
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: railWidth + outerGap,
+          bottom: 0,
+          child: _buildPageInfoHeader(theme, isLargeScreen: true),
+        ),
+        Positioned(
+          top: outerGap,
+          right: outerGap,
+          bottom: outerGap,
+          width: railWidth,
+          child: Column(
+            children: [
+              _ReaderSideToolsPanel(
+                readerTheme: theme,
+                connectedMode: _connectedMode,
+                hideMode: _hideMode,
+                onBack: () => Navigator.of(context).maybePop(),
+                onSearch: _openSearch,
+                onIndex: _openIndexPage,
+                onSettings: _openReaderSettings,
+                onSaveSurah: _saveCurrentSurahBookmark,
+                onToggleConnectedMode: () {
+                  unawaited(_toggleConnectedMode());
+                },
+                onToggleHideMode: _toggleHideMode,
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: QpcAudioControlBar(
+                  vertical: true,
+                  readerTheme: theme,
+                  reciterName: _reciterName,
+                  volume: _volume,
+                  isLoading: _isAudioLoading,
+                  isPlaying: _isAudioPlaying,
+                  ayahKey: audioTargetAyah,
+                  activeWord: _activeAudioWord,
+                  onVolumeChanged: _changeVolume,
+                  onPlay: () {
+                    unawaited(_playCurrentAudioTarget());
+                  },
+                  onPrevious: () {
+                    unawaited(_playPreviousAyah());
+                  },
+                  onNext: () {
+                    unawaited(_playNextAyah());
+                  },
+                  onReplay: () {
+                    unawaited(_replayCurrentAyah());
+                  },
+                  onStop: () {
+                    unawaited(_stopAudio());
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          left: 16,
+          right: railWidth + outerGap + 16,
+          bottom: 10,
+          child: _buildBottomReaderBar(theme),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPageInfoHeader(
+    QuranReaderTheme theme, {
+    required bool isLargeScreen,
+  }) {
+    if (_connectedMode) {
+      return const SizedBox.shrink();
+    }
+
+    return ValueListenableBuilder<_QpcBottomBarSnapshot>(
+      valueListenable: _bottomBarSnapshotNotifier,
+      builder: (context, snapshot, _) {
+        return ValueListenableBuilder<SvgMushafPageMetadata?>(
+          valueListenable: _pageMetadataNotifier,
+          builder: (context, metadata, _) {
+            final SvgMushafPageMetadata? pageMetadata =
+                metadata != null && metadata.page == snapshot.pageNumber
+                ? metadata
+                : null;
+            final String surahLabel =
+                pageMetadata?.surahSummary ?? snapshot.surahName;
+            final int surahCount = pageMetadata?.surahs.length ?? 1;
+            final int juzNumber = pageMetadata?.juz ?? snapshot.juzNumber;
+
+            return _QpcManualPageInfoHeader(
+              readerTheme: theme,
+              surahLabel: surahLabel,
+              surahCount: surahCount,
+              juzNumber: juzNumber,
+              pageNumber: snapshot.pageNumber,
+              isLargeScreen: isLargeScreen,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildBottomReaderBar(QuranReaderTheme theme) {
+    if (!_connectedMode) {
+      return ValueListenableBuilder<_QpcBottomBarSnapshot>(
+        valueListenable: _bottomBarSnapshotNotifier,
+        builder: (context, snapshot, _) {
+          return QpcBottomPageSlider(
+            visible: _controlsVisible,
+            readerTheme: theme,
+            selectedPageNumber: snapshot.pageNumber,
+            currentSuraName: snapshot.surahName,
+            currentAyahNumber: snapshot.ayahNumber,
+            currentJuzNumber: snapshot.juzNumber,
+            onPreviewPage: _onPagePreviewChanged,
+            onInteractionStart: _handleBottomBarInteractionStart,
+            onInteractionEnd: _handleBottomBarInteractionEnd,
+            onJumpToPage: (page) {
+              unawaited(_jumpToPage(page));
+            },
+          );
+        },
+      );
+    }
+
+    return _ConnectedReadingStatusBar(
+      visible: _controlsVisible,
+      readerTheme: theme,
+      surahName: _currentSuraName,
+      ayahNumber:
+          (_anchorAyahKey ?? _selection?.ayahKey ?? _playingAyah)?.ayah ?? 1,
+      juzNumber: _currentJuzNumber,
+    );
+  }
+}

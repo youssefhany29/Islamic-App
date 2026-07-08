@@ -1,0 +1,2036 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import 'package:islamic_app/features/memorization/data/models/memorization_active_plan_model.dart';
+import 'package:islamic_app/features/memorization/data/models/memorization_session_result_model.dart';
+import 'package:islamic_app/features/memorization/data/models/memorization_today_task_model.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_journey_companion_service.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_plan_storage.dart';
+import 'package:islamic_app/features/memorization/data/services/memorization_session_result_storage.dart';
+import 'package:islamic_app/features/quran/main_quraan_components/constant.dart';
+import '../models/memorization_test_question_model.dart';
+import '../services/memorization_test_question_engine.dart';
+
+import 'package:islamic_app/core/typography/app_text_styles.dart';
+class MemorizationTestSessionPage extends StatefulWidget {
+  const MemorizationTestSessionPage({
+    super.key,
+    required this.task,
+    this.ayahTextResolver,
+  });
+
+  final MemorizationTodayTaskModel task;
+  final AyahTextResolver? ayahTextResolver;
+
+  @override
+  State<MemorizationTestSessionPage> createState() =>
+      _MemorizationTestSessionPageState();
+}
+
+class _MemorizationTestSessionPageState
+    extends State<MemorizationTestSessionPage> {
+  late final DateTime startedAt;
+
+  List<MemorizationTestQuestionModel> questions = [];
+  final Map<String, MemorizationQuestionAnswer> answers = {};
+  final Map<String, String> selectedOptionIds = {};
+  final Map<String, List<String>> orderedOptionIds = {};
+  final Set<String> revealedTextQuestionIds = {};
+
+  int currentIndex = 0;
+  bool isLoadingQuestions = true;
+  bool isFinishing = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    startedAt = DateTime.now();
+    _loadQuestions();
+  }
+
+  Future<void> _loadQuestions() async {
+    AyahTextResolver? resolver = widget.ayahTextResolver;
+
+    resolver ??= await _buildDefaultAyahTextResolver();
+
+    final builtQuestions =
+        const MemorizationTestQuestionEngine().buildQuestions(
+      task: widget.task,
+      ayahTextResolver: resolver,
+      maxQuestions: widget.task.type == 'selfTest' ? 10 : 20,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      questions = builtQuestions;
+      isLoadingQuestions = false;
+    });
+  }
+
+  Future<AyahTextResolver?> _buildDefaultAyahTextResolver() async {
+    try {
+      final data = await readJson();
+      final source = data.isNotEmpty ? data.first : null;
+      if (source is! List) return null;
+
+      final texts = source.map<String>((item) {
+        if (item is Map) {
+          return (item['aya_text_emlaey'] ??
+                  item['text_emlaey'] ??
+                  item['imlaei'] ??
+                  item['aya_text'] ??
+                  item['text'] ??
+                  '')
+              .toString()
+              .trim();
+        }
+
+        return item?.toString().trim() ?? '';
+      }).toList(growable: false);
+
+      return (globalAyahIndex) {
+        if (globalAyahIndex < 0 || globalAyahIndex >= texts.length) {
+          return 'آية ${globalAyahIndex + 1}';
+        }
+
+        final text = texts[globalAyahIndex].trim();
+        return text.isEmpty ? 'آية ${globalAyahIndex + 1}' : text;
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  MemorizationTestQuestionModel? get currentQuestion {
+    if (questions.isEmpty) return null;
+    final safeIndex = currentIndex.clamp(0, questions.length - 1).toInt();
+    return questions[safeIndex];
+  }
+
+  int get correctAnswersCount {
+    return answers.values.where((answer) => answer.isCorrect).length;
+  }
+
+  double get score {
+    if (questions.isEmpty) return 0;
+    return correctAnswersCount / questions.length;
+  }
+
+  String get rating {
+    if (score >= 0.9) return 'easy';
+    if (score >= 0.7) return 'good';
+    if (score >= 0.45) return 'hard';
+    return 'forgot';
+  }
+
+  String get ratingTitle {
+    if (score >= 0.9) return 'ممتاز جدًا';
+    if (score >= 0.7) return 'جيد جدًا';
+    if (score >= 0.45) return 'يحتاج تثبيت';
+    return 'يحتاج مراجعة قوية';
+  }
+
+  String get ratingMessage {
+    if (score >= 0.9) {
+      return 'أداؤك قوي جدًا. كمل بنفس الهدوء، والاختبارات القادمة هتظهر في وقتها.';
+    }
+
+    if (score >= 0.7) {
+      return 'أداؤك جيد، لكن في مواضع بسيطة محتاجة تثبيت قبل ما تثقل على نفسك.';
+    }
+
+    if (score >= 0.45) {
+      return 'في مواضع محتاجة رحلة تثبيت قصيرة. جهزنا لك خطة هادئة بدل ما نسيبك محتار.';
+    }
+
+    return 'الأفضل نبدأ رحلة تثبيت قصيرة قبل أي حفظ جديد، بدون ضغط وبدون تراكم.';
+  }
+
+  bool _isAnswered(MemorizationTestQuestionModel question) {
+    return answers.containsKey(question.id);
+  }
+
+  bool _isCorrect(MemorizationTestQuestionModel question) {
+    return answers[question.id]?.isCorrect ?? false;
+  }
+
+  void _selectOption({
+    required MemorizationTestQuestionModel question,
+    required MemorizationQuestionOption option,
+  }) {
+    if (_isAnswered(question)) return;
+
+    setState(() {
+      selectedOptionIds[question.id] = option.id;
+
+      answers[question.id] = MemorizationQuestionAnswer(
+        questionId: question.id,
+        isCorrect: option.isCorrect,
+        answeredAt: DateTime.now(),
+      );
+    });
+  }
+
+  void _selectOrderingOption({
+    required MemorizationTestQuestionModel question,
+    required MemorizationQuestionOption option,
+  }) {
+    if (_isAnswered(question)) return;
+
+    final currentOrder = List<String>.from(
+      orderedOptionIds[question.id] ?? const <String>[],
+    );
+
+    if (currentOrder.contains(option.id)) return;
+
+    setState(() {
+      currentOrder.add(option.id);
+      orderedOptionIds[question.id] = currentOrder;
+    });
+  }
+
+  void _clearOrderingAnswer(MemorizationTestQuestionModel question) {
+    if (_isAnswered(question)) return;
+    setState(() {
+      orderedOptionIds.remove(question.id);
+    });
+  }
+
+  void _submitOrderingAnswer(MemorizationTestQuestionModel question) {
+    if (_isAnswered(question)) return;
+
+    final selected = orderedOptionIds[question.id] ?? const <String>[];
+    if (selected.length != question.options.length) {
+      _showSnackBar('رتّب كل العناصر الأول.');
+      return;
+    }
+
+    final optionById = <String, MemorizationQuestionOption>{
+      for (final option in question.options) option.id: option,
+    };
+
+    bool correct = true;
+    for (int i = 0; i < selected.length; i++) {
+      final option = optionById[selected[i]];
+      if (option == null || option.correctOrder != i) {
+        correct = false;
+        break;
+      }
+    }
+
+    setState(() {
+      answers[question.id] = MemorizationQuestionAnswer(
+        questionId: question.id,
+        isCorrect: correct,
+        answeredAt: DateTime.now(),
+      );
+    });
+  }
+
+  void _revealText(MemorizationTestQuestionModel question) {
+    if (_isAnswered(question)) return;
+
+    setState(() {
+      revealedTextQuestionIds.add(question.id);
+    });
+  }
+
+  void _submitSelfEvaluation({
+    required MemorizationTestQuestionModel question,
+    required bool isCorrect,
+  }) {
+    if (_isAnswered(question)) return;
+
+    setState(() {
+      answers[question.id] = MemorizationQuestionAnswer(
+        questionId: question.id,
+        isCorrect: isCorrect,
+        answeredAt: DateTime.now(),
+      );
+    });
+  }
+
+  void _previous() {
+    if (currentIndex <= 0) return;
+
+    setState(() {
+      currentIndex--;
+    });
+  }
+
+  Future<void> _nextOrFinish() async {
+    final question = currentQuestion;
+    if (question == null || isFinishing) return;
+
+    if (!_isAnswered(question)) {
+      _showSnackBar(
+        question.hasOptions
+            ? 'اختار إجابة الأول، وبعدها كمل.'
+            : 'اضغط عرض النص وقيّم تسميعك الأول.',
+      );
+      return;
+    }
+
+    if (currentIndex < questions.length - 1) {
+      setState(() {
+        currentIndex++;
+      });
+      return;
+    }
+
+    await _finishTest();
+  }
+
+  Future<void> _finishTest() async {
+    if (isFinishing) return;
+
+    setState(() => isFinishing = true);
+
+    final completedAt = DateTime.now();
+    final actualMinutes =
+        completedAt.difference(startedAt).inMinutes.clamp(1, 999).toInt();
+
+    final result = MemorizationSessionResultModel(
+      id: 'test_result_${completedAt.microsecondsSinceEpoch}',
+      taskId: widget.task.id,
+      taskType: widget.task.type,
+      startGlobalAyahIndex: widget.task.startGlobalAyahIndex,
+      endGlobalAyahIndex: widget.task.endGlobalAyahIndex,
+      ayahsCount: widget.task.ayahsCount,
+      rating: rating,
+      completedStep: 'testing',
+      estimatedMinutes: widget.task.expectedMinutes,
+      actualMinutes: actualMinutes,
+      needsRescueReview: score < 0.7,
+      completedAt: completedAt,
+    );
+
+    await MemorizationSessionResultStorage.addResult(result);
+
+    final activePlan = await MemorizationPlanStorage.getActivePlan();
+    final quickPlan = _buildQuickPlanFromTest(
+      activePlan: activePlan,
+      result: result,
+    );
+
+    if (!mounted) return;
+
+    setState(() => isFinishing = false);
+
+    _showResultBottomSheet(
+      activePlan: activePlan,
+      quickPlan: quickPlan,
+    );
+  }
+
+  MemorizationQuickStabilizationPlan? _buildQuickPlanFromTest({
+    required MemorizationActivePlanModel? activePlan,
+    required MemorizationSessionResultModel result,
+  }) {
+    if (activePlan == null) return null;
+    if (score >= 0.7) return null;
+    if (!widget.task.hasValidRange) return null;
+
+    final ayahsCount = widget.task.ayahsCount.clamp(1, 999999).toInt();
+
+    int days;
+    if (score < 0.45) {
+      days = 7;
+    } else if (ayahsCount > 80) {
+      days = 7;
+    } else if (ayahsCount > 40) {
+      days = 5;
+    } else {
+      days = 4;
+    }
+
+    final estimatedDailyAyahs = (ayahsCount / days).ceil().clamp(1, 40).toInt();
+
+    return MemorizationQuickStabilizationPlan(
+      title: 'رحلة تثبيت بعد الاختبار',
+      subtitle: widget.task.scopeTitle.trim().isEmpty
+          ? 'تثبيت مواضع الاختبار'
+          : widget.task.scopeTitle,
+      days: days,
+      startGlobalAyahIndex: widget.task.startGlobalAyahIndex,
+      endGlobalAyahIndex: widget.task.endGlobalAyahIndex,
+      estimatedDailyAyahs: estimatedDailyAyahs,
+      plannedTestsCount: days >= 7 ? 2 : 1,
+      focusPoints: [
+        if (score < 0.45)
+          'ابدأ بتسميع قصير، واضغط عرض النص عند الحاجة بدون استعجال.'
+        else
+          'راجع المواضع التي أخطأت فيها قبل دخول اختبار جديد.',
+        'ركّز على ترتيب الآيات والانتقال من آية للي بعدها.',
+        'خلي الرحلة قصيرة وثابتة بدل تراكم كبير.',
+      ],
+    );
+  }
+
+  Future<void> _activateQuickPlan({
+    required MemorizationActivePlanModel activePlan,
+    required MemorizationQuickStabilizationPlan quickPlan,
+  }) async {
+    Navigator.of(context).pop();
+
+    setState(() => isFinishing = true);
+
+    await const MemorizationJourneyCompanionService()
+        .activateQuickStabilizationPlan(
+      quickPlan: quickPlan,
+      sourcePlan: activePlan,
+    );
+
+    if (!mounted) return;
+
+    setState(() => isFinishing = false);
+
+    _showSnackBar('تم وضع رحلة التثبيت في التقويم بهدوء 🌿');
+
+    Navigator.of(context).pop(true);
+  }
+
+  void _showResultBottomSheet({
+    required MemorizationActivePlanModel? activePlan,
+    required MemorizationQuickStabilizationPlan? quickPlan,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return _TestResultSheet(
+          totalQuestions: questions.length,
+          correctAnswers: correctAnswersCount,
+          score: score,
+          ratingTitle: ratingTitle,
+          ratingMessage: ratingMessage,
+          quickPlan: quickPlan,
+          canActivateQuickPlan: activePlan != null && quickPlan != null,
+          onActivateQuickPlan: activePlan == null || quickPlan == null
+              ? null
+              : () => _activateQuickPlan(
+                    activePlan: activePlan,
+                    quickPlan: quickPlan,
+                  ),
+          onReviewAgain: () {
+            Navigator.of(context).pop();
+
+            setState(() {
+              currentIndex = 0;
+              answers.clear();
+              selectedOptionIds.clear();
+              orderedOptionIds.clear();
+              revealedTextQuestionIds.clear();
+            });
+          },
+          onClose: () {
+            Navigator.of(context).pop();
+            Navigator.of(context).pop(true);
+          },
+        );
+      },
+    );
+  }
+
+  void _showSnackBar(String message) {
+    final theme = Theme.of(context);
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16.r),
+        ),
+        content: Text(
+          message,
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.right,
+          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+            color: theme.colorScheme.background
+),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final question = currentQuestion;
+
+    return Scaffold(
+      backgroundColor: theme.colorScheme.background,
+      appBar: AppBar(
+        backgroundColor: theme.colorScheme.background,
+        elevation: 0,
+        centerTitle: true,
+        title: Text(
+          'اختبار التثبيت',
+          style: AppTextStyles.body(context).copyWith(
+fontWeight: FontWeight.w900,
+            color: theme.colorScheme.surface
+),
+        ),
+      ),
+      body: SafeArea(
+        child: isLoadingQuestions
+            ? const Center(child: CircularProgressIndicator())
+            : question == null
+                ? const _EmptyTestState()
+                : Padding(
+                    padding: EdgeInsets.all(16.w),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _ProgressHeader(
+                          current: currentIndex + 1,
+                          total: questions.length,
+                          completed: answers.length,
+                          correct: correctAnswersCount,
+                        ),
+                        SizedBox(height: 14.h),
+                        Expanded(
+                          child: _QuestionCard(
+                            question: question,
+                            isAnswered: _isAnswered(question),
+                            isCorrect: _isCorrect(question),
+                            isTextRevealed:
+                                revealedTextQuestionIds.contains(question.id),
+                            selectedOptionId: selectedOptionIds[question.id],
+                            orderedOptionIds: orderedOptionIds[question.id] ??
+                                const <String>[],
+                            onOptionTap: (option) {
+                              _selectOption(
+                                question: question,
+                                option: option,
+                              );
+                            },
+                            onOrderingOptionTap: (option) {
+                              _selectOrderingOption(
+                                question: question,
+                                option: option,
+                              );
+                            },
+                            onClearOrdering: () =>
+                                _clearOrderingAnswer(question),
+                            onSubmitOrdering: () =>
+                                _submitOrderingAnswer(question),
+                            onRevealText: () => _revealText(question),
+                            onSelfEvaluation: (isCorrect) {
+                              _submitSelfEvaluation(
+                                question: question,
+                                isCorrect: isCorrect,
+                              );
+                            },
+                          ),
+                        ),
+                        SizedBox(height: 12.h),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _TestButton(
+                                label: currentIndex == questions.length - 1
+                                    ? isFinishing
+                                        ? 'جاري الحفظ...'
+                                        : 'إنهاء الاختبار'
+                                    : 'التالي',
+                                icon: currentIndex == questions.length - 1
+                                    ? Icons.done_all_rounded
+                                    : Icons.arrow_back_rounded,
+                                onTap: _nextOrFinish,
+                                isPrimary: true,
+                                isDisabled: isFinishing,
+                              ),
+                            ),
+                            SizedBox(width: 10.w),
+                            Expanded(
+                              child: _TestButton(
+                                label: 'السابق',
+                                icon: Icons.arrow_forward_rounded,
+                                onTap: _previous,
+                                isPrimary: false,
+                                isDisabled: currentIndex == 0 || isFinishing,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+      ),
+    );
+  }
+}
+
+class _ProgressHeader extends StatelessWidget {
+  const _ProgressHeader({
+    required this.current,
+    required this.total,
+    required this.completed,
+    required this.correct,
+  });
+
+  final int current;
+  final int total;
+  final int completed;
+  final int correct;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final progress = total <= 0 ? 0.0 : completed / total;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.08),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Expanded(
+                child: Text(
+                  'السؤال $current من $total',
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface
+),
+                ),
+              ),
+              SizedBox(width: 10.w),
+              _MiniScoreChip(
+                text: '$correct صح',
+                icon: Icons.check_circle_rounded,
+              ),
+            ],
+          ),
+          SizedBox(height: 10.h),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20.r),
+            child: LinearProgressIndicator(
+              minHeight: 8.h,
+              value: progress,
+              backgroundColor: theme.colorScheme.surface.withOpacity(0.07),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniScoreChip extends StatelessWidget {
+  const _MiniScoreChip({
+    required this.text,
+    required this.icon,
+  });
+
+  final String text;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 5.h),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(30.r),
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 13.sp,
+            color: theme.colorScheme.primary,
+          ),
+          SizedBox(width: 4.w),
+          Text(
+            text,
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: theme.colorScheme.primary
+),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuestionCard extends StatelessWidget {
+  const _QuestionCard({
+    required this.question,
+    required this.isAnswered,
+    required this.isCorrect,
+    required this.isTextRevealed,
+    required this.selectedOptionId,
+    required this.orderedOptionIds,
+    required this.onOptionTap,
+    required this.onOrderingOptionTap,
+    required this.onClearOrdering,
+    required this.onSubmitOrdering,
+    required this.onRevealText,
+    required this.onSelfEvaluation,
+  });
+
+  final MemorizationTestQuestionModel question;
+  final bool isAnswered;
+  final bool isCorrect;
+  final bool isTextRevealed;
+  final String? selectedOptionId;
+  final List<String> orderedOptionIds;
+  final ValueChanged<MemorizationQuestionOption> onOptionTap;
+  final ValueChanged<MemorizationQuestionOption> onOrderingOptionTap;
+  final VoidCallback onClearOrdering;
+  final VoidCallback onSubmitOrdering;
+  final VoidCallback onRevealText;
+  final ValueChanged<bool> onSelfEvaluation;
+
+  bool get isSelfEvaluationQuestion {
+    return !question.hasOptions;
+  }
+
+  bool get shouldShowAnswer {
+    if (question.hasOptions) return isAnswered;
+    return isTextRevealed || isAnswered;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondary,
+        borderRadius: BorderRadius.circular(26.r),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.10),
+        ),
+      ),
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _QuestionBadge(text: question.type.title),
+            SizedBox(height: 14.h),
+            Text(
+              question.prompt,
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: theme.colorScheme.surface,
+                height: 1.45
+),
+            ),
+            SizedBox(height: 12.h),
+            _HintBox(text: question.hint),
+            if (question.isOrderingQuestion) ...[
+              SizedBox(height: 14.h),
+              _OrderingQuestionPanel(
+                question: question,
+                orderedOptionIds: orderedOptionIds,
+                isAnswered: isAnswered,
+                onOptionTap: onOrderingOptionTap,
+                onClear: onClearOrdering,
+                onSubmit: onSubmitOrdering,
+              ),
+            ] else if (question.hasOptions) ...[
+              SizedBox(height: 14.h),
+              ...question.options.map((option) {
+                return Padding(
+                  padding: EdgeInsets.only(bottom: 8.h),
+                  child: _OptionTile(
+                    option: option,
+                    isAnswered: isAnswered,
+                    isSelected: selectedOptionId == option.id,
+                    onTap: () => onOptionTap(option),
+                  ),
+                );
+              }),
+            ],
+            if (isSelfEvaluationQuestion) ...[
+              SizedBox(height: 14.h),
+              if (!isTextRevealed && !isAnswered)
+                _RevealTextButton(onTap: onRevealText),
+              if (isTextRevealed || isAnswered) ...[
+                _AnswerBox(text: question.correctAnswerText),
+                SizedBox(height: 12.h),
+                _SelfEvaluationPanel(
+                  isAnswered: isAnswered,
+                  isCorrect: isCorrect,
+                  onGoodTap: () => onSelfEvaluation(true),
+                  onMediumTap: () => onSelfEvaluation(false),
+                  onForgotTap: () => onSelfEvaluation(false),
+                ),
+              ],
+            ],
+            if (!isSelfEvaluationQuestion) ...[
+              SizedBox(height: 16.h),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: shouldShowAnswer
+                    ? Column(
+                        key: const ValueKey('shown_answer_column'),
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          _AnswerStatusBox(isCorrect: isCorrect),
+                          SizedBox(height: 10.h),
+                          _AnswerBox(text: question.correctAnswerText),
+                        ],
+                      )
+                    : const _HiddenAnswerBox(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuestionBadge extends StatelessWidget {
+  const _QuestionBadge({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(30.r),
+        ),
+        child: Text(
+          text,
+          textDirection: TextDirection.rtl,
+          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+            color: theme.colorScheme.primary
+),
+        ),
+      ),
+    );
+  }
+}
+
+class _HintBox extends StatelessWidget {
+  const _HintBox({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background.withOpacity(0.36),
+        borderRadius: BorderRadius.circular(18.r),
+      ),
+      child: Text(
+        text,
+        textDirection: TextDirection.rtl,
+        textAlign: TextAlign.right,
+        style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+          color: theme.colorScheme.surface.withOpacity(0.72),
+          height: 1.5
+),
+      ),
+    );
+  }
+}
+
+class _RevealTextButton extends StatelessWidget {
+  const _RevealTextButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: theme.colorScheme.primary,
+      borderRadius: BorderRadius.circular(18.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18.r),
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 13.h, horizontal: 12.w),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                Icons.visibility_rounded,
+                color: Colors.white,
+                size: 18.sp,
+              ),
+              SizedBox(width: 8.w),
+              Text(
+                'عرض النص',
+                textDirection: TextDirection.rtl,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: Colors.white
+),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderingQuestionPanel extends StatelessWidget {
+  const _OrderingQuestionPanel({
+    required this.question,
+    required this.orderedOptionIds,
+    required this.isAnswered,
+    required this.onOptionTap,
+    required this.onClear,
+    required this.onSubmit,
+  });
+
+  final MemorizationTestQuestionModel question;
+  final List<String> orderedOptionIds;
+  final bool isAnswered;
+  final ValueChanged<MemorizationQuestionOption> onOptionTap;
+  final VoidCallback onClear;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final optionById = <String, MemorizationQuestionOption>{
+      for (final option in question.options) option.id: option,
+    };
+    final selectedOptions = orderedOptionIds
+        .map((id) => optionById[id])
+        .whereType<MemorizationQuestionOption>()
+        .toList(growable: false);
+    final remainingOptions = question.options
+        .where((option) => !orderedOptionIds.contains(option.id))
+        .toList(growable: false);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _OrderingBox(
+          title: 'ترتيبك',
+          emptyText: 'اضغط العناصر بالترتيب الصحيح',
+          options: selectedOptions,
+          isAnswered: isAnswered,
+          showOrderNumbers: true,
+          onOptionTap: (_) {},
+        ),
+        SizedBox(height: 10.h),
+        _OrderingBox(
+          title: 'العناصر',
+          emptyText: 'تم اختيار كل العناصر',
+          options: remainingOptions,
+          isAnswered: isAnswered,
+          showOrderNumbers: false,
+          onOptionTap: onOptionTap,
+        ),
+        SizedBox(height: 10.h),
+        Row(
+          children: [
+            Expanded(
+              child: _SmallOrderingButton(
+                text: 'اعتماد الترتيب',
+                icon: Icons.check_circle_rounded,
+                isPrimary: true,
+                isDisabled: isAnswered ||
+                    orderedOptionIds.length != question.options.length,
+                onTap: onSubmit,
+              ),
+            ),
+            SizedBox(width: 8.w),
+            Expanded(
+              child: _SmallOrderingButton(
+                text: 'إعادة',
+                icon: Icons.refresh_rounded,
+                isPrimary: false,
+                isDisabled: isAnswered || orderedOptionIds.isEmpty,
+                onTap: onClear,
+              ),
+            ),
+          ],
+        ),
+        if (isAnswered) ...[
+          SizedBox(height: 10.h),
+          Text(
+            'الإجابة الصحيحة تظهر تحت السؤال بعد الاعتماد.',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+              color: theme.colorScheme.surface.withOpacity(0.55)
+),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _OrderingBox extends StatelessWidget {
+  const _OrderingBox({
+    required this.title,
+    required this.emptyText,
+    required this.options,
+    required this.isAnswered,
+    required this.showOrderNumbers,
+    required this.onOptionTap,
+  });
+
+  final String title;
+  final String emptyText;
+  final List<MemorizationQuestionOption> options;
+  final bool isAnswered;
+  final bool showOrderNumbers;
+  final ValueChanged<MemorizationQuestionOption> onOptionTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(10.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background.withOpacity(0.28),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            title,
+            textDirection: TextDirection.rtl,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface
+),
+          ),
+          SizedBox(height: 8.h),
+          if (options.isEmpty)
+            Text(
+              emptyText,
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                color: theme.colorScheme.surface.withOpacity(0.48)
+),
+            )
+          else
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 7.w,
+              runSpacing: 7.h,
+              children: [
+                for (int i = 0; i < options.length; i++)
+                  _OrderingChip(
+                    option: options[i],
+                    orderNumber: showOrderNumbers ? i + 1 : null,
+                    isDisabled: isAnswered || showOrderNumbers,
+                    onTap: () => onOptionTap(options[i]),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrderingChip extends StatelessWidget {
+  const _OrderingChip({
+    required this.option,
+    required this.orderNumber,
+    required this.isDisabled,
+    required this.onTap,
+  });
+
+  final MemorizationQuestionOption option;
+  final int? orderNumber;
+  final bool isDisabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14.r),
+        onTap: isDisabled ? null : onTap,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: 260.w),
+          padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 7.h),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondary,
+            borderRadius: BorderRadius.circular(14.r),
+            border: Border.all(
+              color: theme.colorScheme.primary.withOpacity(0.14),
+            ),
+          ),
+          child: Text(
+            orderNumber == null ? option.text : '$orderNumber. ${option.text}',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+              color: theme.colorScheme.surface.withOpacity(0.76),
+              height: 1.35
+),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SmallOrderingButton extends StatelessWidget {
+  const _SmallOrderingButton({
+    required this.text,
+    required this.icon,
+    required this.isPrimary,
+    required this.isDisabled,
+    required this.onTap,
+  });
+
+  final String text;
+  final IconData icon;
+  final bool isPrimary;
+  final bool isDisabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final background = isPrimary
+        ? theme.colorScheme.primary
+        : theme.colorScheme.primary.withOpacity(0.10);
+    final foreground = isPrimary ? Colors.white : theme.colorScheme.primary;
+
+    return Opacity(
+      opacity: isDisabled ? 0.48 : 1,
+      child: Material(
+        color: background,
+        borderRadius: BorderRadius.circular(15.r),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(15.r),
+          onTap: isDisabled ? null : onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 9.h),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              textDirection: TextDirection.rtl,
+              children: [
+                Icon(icon, color: foreground, size: 15.sp),
+                SizedBox(width: 5.w),
+                Flexible(
+                  child: Text(
+                    text,
+                    textDirection: TextDirection.rtl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                      color: foreground
+),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OptionTile extends StatelessWidget {
+  const _OptionTile({
+    required this.option,
+    required this.isAnswered,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final MemorizationQuestionOption option;
+  final bool isAnswered;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  Color _backgroundColor(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (!isAnswered) return theme.colorScheme.background.withOpacity(0.32);
+    if (option.isCorrect) return Colors.green.withOpacity(0.13);
+    if (isSelected && !option.isCorrect) {
+      return theme.colorScheme.error.withOpacity(0.13);
+    }
+
+    return theme.colorScheme.background.withOpacity(0.22);
+  }
+
+  Color _borderColor(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (!isAnswered) return theme.colorScheme.outline.withOpacity(0.06);
+    if (option.isCorrect) return Colors.green.withOpacity(0.45);
+    if (isSelected && !option.isCorrect) {
+      return theme.colorScheme.error.withOpacity(0.45);
+    }
+
+    return theme.colorScheme.outline.withOpacity(0.06);
+  }
+
+  Color _textColor(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (!isAnswered) return theme.colorScheme.surface.withOpacity(0.78);
+    if (option.isCorrect) return Colors.green.shade700;
+    if (isSelected && !option.isCorrect) return theme.colorScheme.error;
+
+    return theme.colorScheme.surface.withOpacity(0.45);
+  }
+
+  IconData? get _icon {
+    if (!isAnswered) return null;
+    if (option.isCorrect) return Icons.check_circle_rounded;
+    if (isSelected && !option.isCorrect) return Icons.cancel_rounded;
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = _icon;
+
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(16.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16.r),
+        onTap: isAnswered ? null : onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: double.infinity,
+          padding: EdgeInsets.all(11.w),
+          decoration: BoxDecoration(
+            color: _backgroundColor(context),
+            borderRadius: BorderRadius.circular(16.r),
+            border: Border.all(color: _borderColor(context)),
+          ),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (icon != null) ...[
+                Padding(
+                  padding: EdgeInsets.only(top: 2.h),
+                  child: Icon(
+                    icon,
+                    size: 17.sp,
+                    color: _textColor(context),
+                  ),
+                ),
+                SizedBox(width: 8.w),
+              ],
+              Expanded(
+                child: Text(
+                  option.text,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+                    color: _textColor(context),
+                    height: 1.55
+),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SelfEvaluationPanel extends StatelessWidget {
+  const _SelfEvaluationPanel({
+    required this.isAnswered,
+    required this.isCorrect,
+    required this.onGoodTap,
+    required this.onMediumTap,
+    required this.onForgotTap,
+  });
+
+  final bool isAnswered;
+  final bool isCorrect;
+  final VoidCallback onGoodTap;
+  final VoidCallback onMediumTap;
+  final VoidCallback onForgotTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (isAnswered) {
+      return Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(12.w),
+        decoration: BoxDecoration(
+          color: isCorrect
+              ? Colors.green.withOpacity(0.10)
+              : theme.colorScheme.error.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(18.r),
+        ),
+        child: Text(
+          isCorrect
+              ? 'تم تسجيل السؤال كموضع محفوظ.'
+              : 'تم تسجيل السؤال كموضع يحتاج تثبيت.',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.right,
+          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+            color: isCorrect ? Colors.green.shade700 : theme.colorScheme.error,
+            height: 1.5
+),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          'بعد ما راجعت النص، قيّم تسميعك:',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.right,
+          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+            color: theme.colorScheme.surface
+),
+        ),
+        SizedBox(height: 10.h),
+        Row(
+          children: [
+            Expanded(
+              child: _EvaluationButton(
+                label: 'نسيت',
+                icon: Icons.close_rounded,
+                onTap: onForgotTap,
+                color: theme.colorScheme.error,
+              ),
+            ),
+            SizedBox(width: 8.w),
+            Expanded(
+              child: _EvaluationButton(
+                label: 'متردد',
+                icon: Icons.help_outline_rounded,
+                onTap: onMediumTap,
+                color: Colors.orange,
+              ),
+            ),
+            SizedBox(width: 8.w),
+            Expanded(
+              child: _EvaluationButton(
+                label: 'حفظتها',
+                icon: Icons.check_rounded,
+                onTap: onGoodTap,
+                color: Colors.green,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _EvaluationButton extends StatelessWidget {
+  const _EvaluationButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withOpacity(0.10),
+      borderRadius: BorderRadius.circular(16.r),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16.r),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 11.h),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(icon, size: 15.sp, color: color),
+              SizedBox(width: 5.w),
+              Text(
+                label,
+                textDirection: TextDirection.rtl,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: color
+),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HiddenAnswerBox extends StatelessWidget {
+  const _HiddenAnswerBox();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.055),
+        borderRadius: BorderRadius.circular(18.r),
+      ),
+      child: Text(
+        'اختر إجابتك، وبعدها ستظهر الإجابة الصحيحة.',
+        textDirection: TextDirection.rtl,
+        textAlign: TextAlign.right,
+        style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+          color: theme.colorScheme.surface.withOpacity(0.54),
+          height: 1.45
+),
+      ),
+    );
+  }
+}
+
+class _AnswerStatusBox extends StatelessWidget {
+  const _AnswerStatusBox({required this.isCorrect});
+
+  final bool isCorrect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final color = isCorrect ? Colors.green : theme.colorScheme.error;
+    final icon = isCorrect ? Icons.check_circle_rounded : Icons.cancel_rounded;
+    final text = isCorrect
+        ? 'إجابة صحيحة، ممتاز.'
+        : 'الإجابة تحتاج مراجعة، ركّز على هذا الموضع.';
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(18.r),
+      ),
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Icon(icon, color: color, size: 17.sp),
+          SizedBox(width: 8.w),
+          Expanded(
+            child: Text(
+              text,
+              textDirection: TextDirection.rtl,
+              textAlign: TextAlign.right,
+              style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                color: color,
+                height: 1.4
+),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnswerBox extends StatelessWidget {
+  const _AnswerBox({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(
+          color: theme.colorScheme.primary.withOpacity(0.12),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'النص للمراجعة',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: theme.colorScheme.primary
+),
+          ),
+          SizedBox(height: 8.h),
+          Text(
+            text,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+              color: theme.colorScheme.surface.withOpacity(0.76),
+              height: 1.65
+),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TestButton extends StatelessWidget {
+  const _TestButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    required this.isPrimary,
+    this.isDisabled = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isPrimary;
+  final bool isDisabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final backgroundColor =
+        isPrimary ? theme.colorScheme.primary : theme.colorScheme.secondary;
+
+    final foregroundColor =
+        isPrimary ? Colors.white : theme.colorScheme.primary;
+
+    return Opacity(
+      opacity: isDisabled ? 0.45 : 1,
+      child: Material(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(18.r),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18.r),
+          onTap: isDisabled ? null : onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 13.h),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              textDirection: TextDirection.rtl,
+              children: [
+                Icon(icon, color: foregroundColor, size: 18.sp),
+                SizedBox(width: 7.w),
+                Text(
+                  label,
+                  textDirection: TextDirection.rtl,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: foregroundColor
+),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TestResultSheet extends StatelessWidget {
+  const _TestResultSheet({
+    required this.totalQuestions,
+    required this.correctAnswers,
+    required this.score,
+    required this.ratingTitle,
+    required this.ratingMessage,
+    required this.quickPlan,
+    required this.canActivateQuickPlan,
+    required this.onActivateQuickPlan,
+    required this.onReviewAgain,
+    required this.onClose,
+  });
+
+  final int totalQuestions;
+  final int correctAnswers;
+  final double score;
+  final String ratingTitle;
+  final String ratingMessage;
+  final MemorizationQuickStabilizationPlan? quickPlan;
+  final bool canActivateQuickPlan;
+  final VoidCallback? onActivateQuickPlan;
+  final VoidCallback onReviewAgain;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final percent = (score * 100).round().clamp(0, 100).toInt();
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.all(14.w),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(18.w),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondary,
+            borderRadius: BorderRadius.circular(28.r),
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42.w,
+                    height: 5.h,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(20.r),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 18.h),
+                Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Container(
+                      width: 48.w,
+                      height: 48.w,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.emoji_events_rounded,
+                        color: theme.colorScheme.primary,
+                        size: 25.sp,
+                      ),
+                    ),
+                    SizedBox(width: 12.w),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            ratingTitle,
+                            textDirection: TextDirection.rtl,
+                            textAlign: TextAlign.right,
+                            style: AppTextStyles.body(context).copyWith(
+fontWeight: FontWeight.w900,
+                              color: theme.colorScheme.surface
+),
+                          ),
+                          SizedBox(height: 4.h),
+                          Text(
+                            'نتيجتك $percent%',
+                            textDirection: TextDirection.rtl,
+                            textAlign: TextAlign.right,
+                            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+                              color: theme.colorScheme.primary
+),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 14.h),
+                _ResultInfoBox(
+                  text: 'الإجابات الصحيحة: $correctAnswers من $totalQuestions',
+                  progress: score.clamp(0, 1),
+                ),
+                SizedBox(height: 12.h),
+                Text(
+                  ratingMessage,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.surface.withOpacity(0.70),
+                    height: 1.55
+),
+                ),
+                if (quickPlan != null) ...[
+                  SizedBox(height: 14.h),
+                  _QuickPlanResultBox(
+                    quickPlan: quickPlan!,
+                    canActivate: canActivateQuickPlan,
+                    onActivate: onActivateQuickPlan,
+                  ),
+                ],
+                SizedBox(height: 18.h),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SheetButton(
+                        label: 'خروج',
+                        icon: Icons.close_rounded,
+                        onTap: onClose,
+                        isPrimary: false,
+                      ),
+                    ),
+                    SizedBox(width: 10.w),
+                    Expanded(
+                      child: _SheetButton(
+                        label: 'إعادة الاختبار',
+                        icon: Icons.refresh_rounded,
+                        onTap: onReviewAgain,
+                        isPrimary: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultInfoBox extends StatelessWidget {
+  const _ResultInfoBox({
+    required this.text,
+    required this.progress,
+  });
+
+  final String text;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.background.withOpacity(0.35),
+        borderRadius: BorderRadius.circular(18.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            text,
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+              color: theme.colorScheme.surface
+),
+          ),
+          SizedBox(height: 8.h),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20.r),
+            child: LinearProgressIndicator(
+              minHeight: 8.h,
+              value: progress,
+              backgroundColor: theme.colorScheme.surface.withOpacity(0.07),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickPlanResultBox extends StatelessWidget {
+  const _QuickPlanResultBox({
+    required this.quickPlan,
+    required this.canActivate,
+    required this.onActivate,
+  });
+
+  final MemorizationQuickStabilizationPlan quickPlan;
+  final bool canActivate;
+  final VoidCallback? onActivate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(13.w),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(
+          color: theme.colorScheme.primary.withOpacity(0.14),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                Icons.spa_rounded,
+                color: theme.colorScheme.primary,
+                size: 20.sp,
+              ),
+              SizedBox(width: 7.w),
+              Expanded(
+                child: Text(
+                  'جهزنا لك رحلة تثبيت قصيرة',
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                    color: theme.colorScheme.surface
+),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8.h),
+          Text(
+            '${quickPlan.days} أيام • ${quickPlan.ayahsCount} آية • ${quickPlan.plannedTestsCount} اختبار تثبيت',
+            textDirection: TextDirection.rtl,
+            textAlign: TextAlign.right,
+            style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+              color: theme.colorScheme.surface.withOpacity(0.66),
+              height: 1.5
+),
+          ),
+          SizedBox(height: 8.h),
+          ...quickPlan.focusPoints.map(
+            (point) => Padding(
+              padding: EdgeInsets.only(bottom: 5.h),
+              child: Row(
+                textDirection: TextDirection.rtl,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.check_circle_rounded,
+                    color: theme.colorScheme.primary,
+                    size: 14.sp,
+                  ),
+                  SizedBox(width: 6.w),
+                  Expanded(
+                    child: Text(
+                      point,
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.right,
+                      style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.surface.withOpacity(0.68),
+                        height: 1.45
+),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(height: 10.h),
+          SizedBox(
+            width: double.infinity,
+            child: Material(
+              color: canActivate
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.surface.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(17.r),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(17.r),
+                onTap: canActivate ? onActivate : null,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12.h),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 18.sp,
+                      ),
+                      SizedBox(width: 7.w),
+                      Text(
+                        'ابدأ رحلة التثبيت',
+                        textDirection: TextDirection.rtl,
+                        style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                          color: Colors.white
+),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetButton extends StatelessWidget {
+  const _SheetButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    required this.isPrimary,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color:
+          isPrimary ? theme.colorScheme.primary : theme.colorScheme.background,
+      borderRadius: BorderRadius.circular(18.r),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18.r),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 13.h),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            textDirection: TextDirection.rtl,
+            children: [
+              Icon(
+                icon,
+                color: isPrimary ? Colors.white : theme.colorScheme.primary,
+                size: 17.sp,
+              ),
+              SizedBox(width: 6.w),
+              Text(
+                label,
+                textDirection: TextDirection.rtl,
+                style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w900,
+                  color: isPrimary ? Colors.white : theme.colorScheme.primary
+),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyTestState extends StatelessWidget {
+  const _EmptyTestState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(22.w),
+        child: Text(
+          'لا توجد أسئلة جاهزة لهذا الاختبار الآن.',
+          textDirection: TextDirection.rtl,
+          textAlign: TextAlign.center,
+          style: AppTextStyles.caption(context).copyWith(
+fontWeight: FontWeight.w800,
+            color: theme.colorScheme.surface.withOpacity(0.65)
+),
+        ),
+      ),
+    );
+  }
+}
